@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Gestionale Cantiere - Gama Service</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f6e56">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cantiere">
+
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 0; background: #f4f6f8; color: #1a1a1a; min-height: 100vh;
+  }
+  header {
+    background: linear-gradient(135deg, #0f6e56, #1d9e75);
+    color: white; padding: 16px 20px; position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .sub { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+  .header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .header-user { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .user-email { font-size: 12px; opacity: 0.9; max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .admin-badge { background: #f59e0b; color: #1a1a1a; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+  .logout-btn { background: rgba(255,255,255,0.2); color: white; border: none; padding: 7px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; width: auto; }
+  .logout-btn:active { background: rgba(255,255,255,0.35); }
+
+  .container { padding: 16px; max-width: 800px; margin: 0 auto; padding-bottom: 100px; }
+
+  .card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+  button { background: #1d9e75; color: white; border: none; padding: 12px 18px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%; transition: all 0.15s; }
+  button:active { transform: scale(0.97); }
+  button.secondary { background: #6b7280; }
+  button.danger { background: #dc2626; }
+  button.small { padding: 8px 12px; font-size: 13px; width: auto; }
+
+  input[type="text"], input[type="email"], input[type="password"], input[type="number"] {
+    width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 15px; margin-bottom: 10px;
+  }
+  label.field-label { display:block; font-size: 13px; color:#374151; font-weight:600; margin-bottom:4px; }
+
+  .item { background: white; padding: 14px; border-radius: 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; transition: all 0.15s; }
+  .item:active { background: #f3f4f6; }
+  .item-info { flex: 1; cursor: pointer; }
+  .item-title { font-weight: 600; font-size: 16px; }
+  .item-sub { font-size: 12px; color: #6b7280; margin-top: 3px; }
+  .item-arrow { color: #9ca3af; font-size: 20px; }
+
+  .breadcrumb { font-size: 13px; color: #6b7280; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .breadcrumb a { color: #1d9e75; text-decoration: none; cursor: pointer; }
+
+  .empty { text-align: center; padding: 40px 20px; color: #9ca3af; }
+  .empty-icon { font-size: 48px; margin-bottom: 10px; }
+
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+  .modal-bg.active { display: flex; }
+  .modal { background: white; border-radius: 16px; padding: 20px; max-width: 420px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal h2 { margin: 0 0 16px 0; font-size: 18px; }
+
+  .toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: #1f2937; color: white; padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 2000; box-shadow: 0 4px 12px rgba(0,0,0,0.2); display: none; }
+  .toast.show { display: block; animation: fadeIn 0.3s; }
+  @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  .fab { position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: #1d9e75; color: white; border: none; font-size: 28px; box-shadow: 0 4px 12px rgba(29,158,117,0.4); cursor: pointer; z-index: 50; }
+  .fab:active { transform: scale(0.95); }
+
+  .loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* checklist operai */
+  .operaio-check { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+  .operaio-check input { width: 18px; height: 18px; margin: 0; }
+  .operaio-check.checked { background: #ecfdf5; border-color: #1d9e75; }
+
+  .admin-note { background: #fef3c7; color: #92400e; font-size: 12px; padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; }
+
+  /* LOGIN */
+  #loginScreen { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; background: linear-gradient(135deg, #0f6e56, #1d9e75); }
+  .login-box { background: white; border-radius: 16px; padding: 32px 24px; max-width: 360px; width: 100%; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+  .login-logo { font-size: 48px; margin-bottom: 8px; }
+  .login-box h1 { font-size: 22px; margin: 0 0 4px; }
+  .login-sub { font-size: 13px; color: #6b7280; margin: 0 0 20px; }
+  .login-error { color: #dc2626; font-size: 13px; margin: 12px 0 0; min-height: 18px; }
+
+  /* menu sezioni cantiere */
+  .section-menu { display: flex; flex-direction: column; gap: 10px; }
+  .menu-card { background: white; border-radius: 12px; padding: 18px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; align-items: center; gap: 14px; cursor: pointer; transition: all 0.15s; }
+  .menu-card:active { background: #f3f4f6; }
+  .menu-icon { font-size: 30px; }
+  .menu-text { flex: 1; }
+  .menu-title { font-weight: 600; font-size: 16px; }
+  .menu-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .voce-prezzo { font-size: 13px; color: #0f6e56; margin-top: 4px; }
+
+  /* SCANNER */
+  .photo-preview { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin: 12px 0; }
+  .photo-thumb { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: #e5e7eb; }
+  .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .photo-thumb .remove { position: absolute; top: 4px; right: 4px; background: rgba(220,38,38,0.9); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; font-weight: bold; }
+  .photo-thumb .rotate-btn { position: absolute; bottom: 4px; right: 4px; background: rgba(29,158,117,0.9); color: white; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 13px; }
+  .scan-stage { position: relative; width: 100%; background: #111; border-radius: 10px; overflow: hidden; margin: 10px 0; touch-action: none; }
+  .scan-stage canvas { display: block; width: 100%; }
+  .scan-overlay { position: absolute; inset: 0; pointer-events: none; }
+  .corner-handle { position: absolute; width: 32px; height: 32px; margin-left: -16px; margin-top: -16px; border: 3px solid #1d9e75; border-radius: 50%; background: rgba(29,158,117,0.25); pointer-events: auto; cursor: grab; touch-action: none; z-index: 5; }
+  .scan-hint { font-size: 12px; color: #6b7280; text-align: center; margin: 6px 0 0; }
+  .scan-filters { display: flex; gap: 6px; margin: 10px 0; }
+  .scan-filters button { flex: 1; padding: 8px; font-size: 12px; background: #e5e7eb; color: #374151; }
+  .scan-filters button.active { background: #1d9e75; color: white; }
+  .processing-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; color: white; font-size: 13px; z-index: 10; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">🏗️</div>
+    <h1>Gestionale Cantiere</h1>
+    <p class="login-sub">Gama Service — accedi col tuo account</p>
+    <input type="email" id="loginEmail" placeholder="Email" autocomplete="username">
+    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
+    <button onclick="login()" id="loginBtn">Accedi</button>
+    <p id="loginError" class="login-error"></p>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none;">
+  <header>
+    <div class="header-row">
+      <div>
+        <h1>🏗️ Gestionale Cantiere</h1>
+        <div class="sub">Gama Service</div>
+      </div>
+      <div class="header-user">
+        <span id="adminBadge" class="admin-badge" style="display:none;">👑 ADMIN</span>
+        <span id="userEmail" class="user-email"></span>
+        <button class="logout-btn" onclick="logout()">Esci</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="breadcrumb" id="breadcrumb"></div>
+    <div id="view"></div>
+  </div>
+
+  <button class="fab" id="fab" onclick="fabAction()" style="display:none;">+</button>
+</div>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modalContent"></div></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, addDoc, setDoc, updateDoc, getDocs, deleteDoc, query, where, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, listAll }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+
+// Config Firebase - progetto gama-service (stesso del gestionale ore)
+const firebaseConfig = {
+  apiKey: "AIzaSyCp7WCI9wWBH1hLNXdYA0LTvRmKYjVo53o",
+  authDomain: "gama-service.firebaseapp.com",
+  projectId: "gama-service",
+  storageBucket: "gama-service.firebasestorage.app",
+  messagingSenderId: "440236038955",
+  appId: "1:440236038955:web:02e55949c592f5fc1b836e",
+  measurementId: "G-HLVXL45XEE"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+window.fb = { auth, db, storage, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+  collection, doc, getDoc, addDoc, setDoc, updateDoc, getDocs, deleteDoc, query, where, serverTimestamp,
+  ref, uploadBytes, getDownloadURL, deleteObject, listAll };
+
+onAuthStateChanged(auth, async (user) => {
+  const loginScreen = document.getElementById('loginScreen');
+  const appDiv = document.getElementById('app');
+  if (user) {
+    window.currentUser = user;
+    window.isAdmin = false;
+    try {
+      const uDoc = await getDoc(doc(db, 'utenti', user.uid));
+      if (uDoc.exists() && uDoc.data().ruolo === 'admin') window.isAdmin = true;
+    } catch (e) { console.warn('Controllo ruolo fallito:', e); }
+    loginScreen.style.display = 'none';
+    appDiv.style.display = 'block';
+    document.getElementById('userEmail').textContent = user.email;
+    document.getElementById('adminBadge').style.display = window.isAdmin ? 'inline-block' : 'none';
+    window.showCantieri();
+  } else {
+    window.currentUser = null;
+    window.isAdmin = false;
+    loginScreen.style.display = 'flex';
+    appDiv.style.display = 'none';
+  }
+});
+</script>
+
+<!-- jsPDF + OpenCV per scanner fatture -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+  window.cvReady = false;
+  var Module = { onRuntimeInitialized() { window.cvReady = true; } };
+</script>
+<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.cvLoaded=true;"></script>
+
+<script>
+// ============ STATO ============
+let state = { level: 'cantieri', cantiereId: null, cantiereName: null, photos: [] };
+
+// ============ LOGIN/LOGOUT ============
+async function login() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pwd = document.getElementById('loginPassword').value;
+  const err = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+  err.textContent = '';
+  if (!email || !pwd) { err.textContent = 'Inserisci email e password'; return; }
+  btn.disabled = true; btn.innerHTML = '<span class="loading"></span>Accesso...';
+  try {
+    await fb.signInWithEmailAndPassword(fb.auth, email, pwd);
+  } catch (e) {
+    const msg = (e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found')
+      ? 'Email o password non corretti'
+      : (e.code === 'auth/invalid-email' ? 'Email non valida' : 'Errore: ' + e.message);
+    err.textContent = msg;
+  } finally { btn.disabled = false; btn.textContent = 'Accedi'; }
+}
+async function logout() {
+  if (!confirm('Vuoi uscire?')) return;
+  try { await fb.signOut(fb.auth); } catch (e) { toast('Errore: ' + e.message); }
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && document.getElementById('loginScreen').style.display !== 'none'
+      && document.activeElement && document.activeElement.id === 'loginPassword') login();
+});
+
+// ============ HELPER ============
+function toast(msg, ms = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms);
+}
+function openModal(html) { document.getElementById('modalContent').innerHTML = html; document.getElementById('modalBg').classList.add('active'); }
+function closeModal() { document.getElementById('modalBg').classList.remove('active'); }
+document.getElementById('modalBg').addEventListener('click', (e) => { if (e.target.id === 'modalBg') closeModal(); });
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+function escapeAttr(s) { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function updateBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  let html = `<a onclick="showCantieri()">🏗️ Cantieri</a>`;
+  if (state.cantiereName) {
+    if (state.level === 'cantiere') {
+      html += ` › <span>${escapeHtml(state.cantiereName)}</span>`;
+    } else {
+      html += ` › <a onclick="apriCantiere('${state.cantiereId}','${escapeAttr(state.cantiereName)}')">${escapeHtml(state.cantiereName)}</a>`;
+      const nomi = { computo: 'Computo metrico', avanzamento: 'Avanzamento', fatture: 'Fatture/Bolle', riepilogo: 'Riepilogo' };
+      if (nomi[state.level]) html += ` › <span>${nomi[state.level]}</span>`;
+    }
+  }
+  bc.innerHTML = html;
+}
+
+// ============ CANTIERI ============
+// Struttura Firestore: collezione "gc_cantieri"
+//   { nome, indirizzo, creato, creatoDa (uid), creatoDaEmail }
+async function showCantieri() {
+  state.level = 'cantieri'; state.cantiereId = null; state.cantiereName = null;
+  updateBreadcrumb();
+  // tutti possono creare cantieri (operai e admin)
+  document.getElementById('fab').style.display = 'flex';
+  document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento...</p></div>';
+
+  try {
+    let items = [];
+    if (window.isAdmin) {
+      // admin vede TUTTI i cantieri
+      const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri'));
+      snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+    } else {
+      // operaio vede solo i cantieri che ha creato lui
+      const q = fb.query(fb.collection(fb.db, 'gc_cantieri'),
+        fb.where('creatoDa', '==', window.currentUser.uid));
+      const snap = await fb.getDocs(q);
+      snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+    }
+    items.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+    if (items.length === 0) {
+      document.getElementById('view').innerHTML =
+        `<div class="empty"><div class="empty-icon">🏗️</div><p>Nessun cantiere.<br>Premi + per crearne uno.</p></div>`;
+      return;
+    }
+
+    let html = '';
+    if (window.isAdmin) html += `<div class="admin-note">👑 Sei admin: vedi i cantieri di tutti gli operai.</div>`;
+    items.forEach(c => {
+      // chi può modificare/eliminare: il creatore oppure l'admin
+      const puoGestire = window.isAdmin || c.creatoDa === window.currentUser.uid;
+      const adminBtns = puoGestire
+        ? `<button class="small secondary" onclick="editCantiere(event,'${c.id}')">✏️</button>
+           <button class="small danger" onclick="eliminaCantiere(event,'${c.id}','${escapeAttr(c.nome)}')">🗑</button>`
+        : '';
+      const sottotitolo = window.isAdmin
+        ? `${escapeHtml(c.indirizzo || 'Nessun indirizzo')} · 👤 ${escapeHtml(c.creatoDaEmail || '?')}`
+        : `${escapeHtml(c.indirizzo || 'Nessun indirizzo')}`;
+      html += `<div class="item">
+        <div class="item-info" onclick="apriCantiere('${c.id}','${escapeAttr(c.nome)}')">
+          <div class="item-title">📂 ${escapeHtml(c.nome)}</div>
+          <div class="item-sub">${sottotitolo}</div>
+        </div>
+        ${adminBtns}
+      </div>`;
+    });
+    document.getElementById('view').innerHTML = html;
+  } catch (e) {
+    document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+// apri il cantiere (Tappa successiva: voci computo / avanzamento / fatture)
+function apriCantiere(id, nome) {
+  state.level = 'cantiere'; state.cantiereId = id; state.cantiereName = nome;
+  updateBreadcrumb();
+  document.getElementById('fab').style.display = 'none';
+  document.getElementById('view').innerHTML = `
+    <div class="section-menu">
+      <div class="menu-card" onclick="showComputo()">
+        <div class="menu-icon">📋</div>
+        <div class="menu-text">
+          <div class="menu-title">Computo metrico</div>
+          <div class="menu-sub">Voci di lavoro e quantità</div>
+        </div>
+        <div class="item-arrow">›</div>
+      </div>
+      <div class="menu-card" onclick="showAvanzamento()">
+        <div class="menu-icon">📈</div>
+        <div class="menu-text">
+          <div class="menu-title">Avanzamento giornaliero</div>
+          <div class="menu-sub">Cosa è stato fatto, giorno per giorno</div>
+        </div>
+        <div class="item-arrow">›</div>
+      </div>
+      <div class="menu-card" onclick="showFatture()">
+        <div class="menu-icon">📄</div>
+        <div class="menu-text">
+          <div class="menu-title">Fatture / Bolle</div>
+          <div class="menu-sub">Documenti del cantiere</div>
+        </div>
+        <div class="item-arrow">›</div>
+      </div>
+      ${window.isAdmin ? `
+      <div class="menu-card" onclick="showRiepilogo()" style="border:1px solid #f59e0b;">
+        <div class="menu-icon">📊</div>
+        <div class="menu-text">
+          <div class="menu-title">Riepilogo 👑</div>
+          <div class="menu-sub">Previsto vs realizzato, valore in euro</div>
+        </div>
+        <div class="item-arrow">›</div>
+      </div>` : ''}
+    </div>`;
+}
+
+// ============ TAPPA 2 — COMPUTO METRICO ============
+// Sottocollezione: gc_cantieri/{id}/computo
+//   { descrizione, unita, quantitaPrev, prezzo (solo admin), creato }
+async function showComputo() {
+  state.level = 'computo';
+  updateBreadcrumb();
+  // chi può aggiungere voci: il creatore del cantiere o l'admin
+  const puoModificare = await verificaProprietaCantiere();
+  document.getElementById('fab').style.display = puoModificare ? 'flex' : 'none';
+  window.fabContext = 'computo';
+  document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento computo...</p></div>';
+
+  try {
+    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    let voci = [];
+    snap.forEach(d => voci.push({ id: d.id, ...d.data() }));
+    voci.sort((a, b) => (a.descrizione || '').localeCompare(b.descrizione || ''));
+
+    if (voci.length === 0) {
+      const hint = puoModificare ? '<br>Premi + per aggiungere una voce.' : '';
+      document.getElementById('view').innerHTML =
+        `<div class="empty"><div class="empty-icon">📋</div><p>Nessuna voce nel computo.${hint}</p></div>`;
+      return;
+    }
+
+    let totaleEuro = 0;
+    let html = '';
+    if (window.isAdmin) html += `<div class="admin-note">👑 Vedi i prezzi e il valore totale (solo admin).</div>`;
+    voci.forEach(v => {
+      const qta = Number(v.quantitaPrev || 0);
+      const prezzo = Number(v.prezzo || 0);
+      const valore = qta * prezzo;
+      if (window.isAdmin) totaleEuro += valore;
+      // riga prezzo visibile solo admin
+      const rigaPrezzo = window.isAdmin
+        ? `<div class="voce-prezzo">€ ${prezzo.toFixed(2)}/cad · <b>€ ${valore.toFixed(2)}</b></div>`
+        : '';
+      const btns = puoModificare
+        ? `<button class="small secondary" onclick="editVoce(event,'${v.id}')">✏️</button>
+           <button class="small danger" onclick="eliminaVoce(event,'${v.id}','${escapeAttr(v.descrizione)}')">🗑</button>`
+        : '';
+      html += `<div class="item">
+        <div class="item-info">
+          <div class="item-title">${escapeHtml(v.descrizione)}</div>
+          <div class="item-sub">Preventivo: ${qta} ${escapeHtml(v.unita || '')}</div>
+          ${rigaPrezzo}
+        </div>
+        ${btns}
+      </div>`;
+    });
+    if (window.isAdmin && totaleEuro > 0) {
+      html += `<div class="card" style="background:#ecfdf5; border:1px solid #1d9e75;">
+        <b>Valore totale computo: € ${totaleEuro.toFixed(2)}</b></div>`;
+    }
+    document.getElementById('view').innerHTML = html;
+  } catch (e) {
+    document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+// verifica se l'utente corrente è creatore del cantiere o admin
+async function verificaProprietaCantiere() {
+  if (window.isAdmin) return true;
+  try {
+    const d = await fb.getDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId));
+    return d.exists() && d.data().creatoDa === window.currentUser.uid;
+  } catch (e) { return false; }
+}
+
+function apriFormVoce(voceId) {
+  let dati = { descrizione: '', unita: '', quantitaPrev: '', prezzo: '' };
+  const carica = async () => {
+    if (voceId) {
+      try {
+        const d = await fb.getDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', voceId));
+        if (d.exists()) dati = { ...dati, ...d.data() };
+      } catch (e) {}
+    }
+    // il campo prezzo appare solo all'admin
+    const campoPrezzo = window.isAdmin
+      ? `<label class="field-label">Prezzo unitario € (solo admin)</label>
+         <input type="number" id="vPrezzo" step="0.01" value="${dati.prezzo || ''}" placeholder="0.00">`
+      : '';
+    openModal(`<h2>${voceId ? '✏️ Modifica' : '➕ Nuova'} voce</h2>
+      <label class="field-label">Descrizione lavoro</label>
+      <input type="text" id="vDesc" value="${escapeAttr(dati.descrizione || '')}" placeholder="Es. Posa pavimento">
+      <label class="field-label">Unità di misura</label>
+      <input type="text" id="vUnita" value="${escapeAttr(dati.unita || '')}" placeholder="mq, ml, nr, kg...">
+      <label class="field-label">Quantità da preventivo</label>
+      <input type="number" id="vQta" step="0.01" value="${dati.quantitaPrev || ''}" placeholder="0">
+      ${campoPrezzo}
+      <button class="success" onclick="salvaVoce('${voceId || ''}')">${voceId ? 'Salva' : 'Aggiungi'}</button>
+      <button class="secondary" style="margin-top:8px;" onclick="closeModal()">Annulla</button>`);
+  };
+  carica();
+}
+
+async function salvaVoce(voceId) {
+  const descrizione = document.getElementById('vDesc').value.trim();
+  const unita = document.getElementById('vUnita').value.trim();
+  const quantitaPrev = parseFloat(document.getElementById('vQta').value) || 0;
+  if (!descrizione) { toast('Inserisci la descrizione'); return; }
+
+  // costruisco i dati; il prezzo lo tocco solo se admin (per non sovrascriverlo a 0)
+  const dati = { descrizione, unita, quantitaPrev };
+  if (window.isAdmin) {
+    dati.prezzo = parseFloat(document.getElementById('vPrezzo').value) || 0;
+  }
+
+  try {
+    if (voceId) {
+      await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', voceId), dati);
+      toast('Voce aggiornata ✓');
+    } else {
+      dati.creato = fb.serverTimestamp();
+      await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'), dati);
+      toast('Voce aggiunta ✓');
+    }
+    closeModal();
+    showComputo();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+function editVoce(event, id) { event.stopPropagation(); apriFormVoce(id); }
+
+async function eliminaVoce(event, id, desc) {
+  event.stopPropagation();
+  if (!confirm(`Eliminare la voce "${desc}"?`)) return;
+  try {
+    await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', id));
+    toast('Voce eliminata ✓');
+    showComputo();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+// ============ TAPPA 3 — AVANZAMENTO GIORNALIERO ============
+// Sottocollezione: gc_cantieri/{id}/avanzamento
+//   { vocedesc, quantita, tipo (normale/extra/variante), data, note, operaioEmail, creato }
+async function showAvanzamento() {
+  state.level = 'avanzamento';
+  updateBreadcrumb();
+  document.getElementById('fab').style.display = 'flex';
+  window.fabContext = 'avanzamento';
+  document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento avanzamento...</p></div>';
+
+  try {
+    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
+    let righe = [];
+    snap.forEach(d => righe.push({ id: d.id, ...d.data() }));
+    // ordino per data decrescente (più recenti in cima)
+    righe.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+
+    if (righe.length === 0) {
+      document.getElementById('view').innerHTML =
+        `<div class="empty"><div class="empty-icon">📈</div><p>Nessun avanzamento registrato.<br>Premi + per aggiungerne uno.</p></div>`;
+      return;
+    }
+
+    const tipoBadge = { normale: '', extra: ' 🔧 EXTRA', variante: ' 🔀 VARIANTE' };
+    let html = `<button class="secondary" style="margin-bottom:12px;" onclick="esportaAvanzamentoExcel()">📥 Scarica Excel</button>`;
+    righe.forEach(r => {
+      const dataIt = r.data ? r.data.split('-').reverse().join('/') : '';
+      // ognuno può eliminare le proprie registrazioni; admin tutto
+      const puoGestire = window.isAdmin || r.operaioUid === window.currentUser.uid;
+      const btn = puoGestire
+        ? `<button class="small danger" onclick="eliminaAvanzamento(event,'${r.id}')">🗑</button>` : '';
+      html += `<div class="item">
+        <div class="item-info">
+          <div class="item-title">${escapeHtml(r.vocedesc || '?')}${tipoBadge[r.tipo] || ''}</div>
+          <div class="item-sub">📅 ${dataIt} · Quantità: ${r.quantita || 0}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
+          ${window.isAdmin && r.operaioEmail ? `<div class="item-sub">👤 ${escapeHtml(r.operaioEmail)}</div>` : ''}
+        </div>
+        ${btn}
+      </div>`;
+    });
+    document.getElementById('view').innerHTML = html;
+  } catch (e) {
+    document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+async function apriFormAvanzamento() {
+  openModal(`<h2>➕ Avanzamento</h2><p style="color:#6b7280;font-size:13px;">Caricamento voci...</p>`);
+  // carico le voci del computo per la tendina
+  let voci = [];
+  try {
+    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    snap.forEach(d => voci.push({ id: d.id, ...d.data() }));
+  } catch (e) {}
+  voci.sort((a, b) => (a.descrizione || '').localeCompare(b.descrizione || ''));
+
+  const oggi = new Date().toISOString().split('T')[0];
+  const opzioniVoci = voci.length
+    ? voci.map(v => `<option value="${escapeAttr(v.descrizione)}">${escapeHtml(v.descrizione)} (${v.unita || ''})</option>`).join('')
+    : '<option value="">— nessuna voce nel computo —</option>';
+
+  openModal(`<h2>➕ Avanzamento giornaliero</h2>
+    <label class="field-label">Voce di lavoro</label>
+    <select id="aVoce" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;margin-bottom:10px;">
+      ${opzioniVoci}
+      <option value="__altro__">➕ Altro (scrivo io)</option>
+    </select>
+    <input type="text" id="aVoceAltro" placeholder="Descrizione lavoro" style="display:none;">
+    <label class="field-label">Data</label>
+    <input type="date" id="aData" value="${oggi}">
+    <label class="field-label">Quantità realizzata</label>
+    <input type="number" id="aQta" step="0.01" placeholder="0">
+    <label class="field-label">Tipo</label>
+    <select id="aTipo" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;margin-bottom:10px;">
+      <option value="normale">Lavoro normale (da computo)</option>
+      <option value="extra">Lavoro extra</option>
+      <option value="variante">Variante opera extra</option>
+    </select>
+    <label class="field-label">Note (opzionale)</label>
+    <input type="text" id="aNote" placeholder="Eventuali note">
+    <button class="success" onclick="salvaAvanzamento()">Registra</button>
+    <button class="secondary" style="margin-top:8px;" onclick="closeModal()">Annulla</button>`);
+
+  // se sceglie "Altro" mostro il campo libero
+  document.getElementById('aVoce').addEventListener('change', function() {
+    document.getElementById('aVoceAltro').style.display = this.value === '__altro__' ? 'block' : 'none';
+  });
+}
+
+async function salvaAvanzamento() {
+  const sel = document.getElementById('aVoce').value;
+  const vocedesc = sel === '__altro__'
+    ? document.getElementById('aVoceAltro').value.trim()
+    : sel;
+  const data = document.getElementById('aData').value;
+  const quantita = parseFloat(document.getElementById('aQta').value) || 0;
+  const tipo = document.getElementById('aTipo').value;
+  const note = document.getElementById('aNote').value.trim();
+
+  if (!vocedesc) { toast('Scegli o scrivi una voce'); return; }
+  if (!data) { toast('Inserisci la data'); return; }
+
+  try {
+    await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'), {
+      vocedesc, data, quantita, tipo, note,
+      operaioUid: window.currentUser.uid,
+      operaioEmail: window.currentUser.email,
+      creato: fb.serverTimestamp()
+    });
+    closeModal();
+    toast('Avanzamento registrato ✓');
+    showAvanzamento();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+async function eliminaAvanzamento(event, id) {
+  event.stopPropagation();
+  if (!confirm('Eliminare questa registrazione?')) return;
+  try {
+    await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento', id));
+    toast('Eliminato ✓');
+    showAvanzamento();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+// Esporta l'avanzamento in Excel (senza prezzi - va bene per tutti)
+async function esportaAvanzamentoExcel() {
+  if (!window.XLSX) { toast('Libreria Excel non caricata, riprova'); return; }
+  toast('Genero Excel...');
+  try {
+    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
+    let righe = [];
+    snap.forEach(d => righe.push(d.data()));
+    righe.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+
+    if (righe.length === 0) { toast('Nessun avanzamento da esportare'); return; }
+
+    const tipoNome = { normale: 'Normale', extra: 'Extra', variante: 'Variante' };
+    // intestazioni + righe (NIENTE prezzi)
+    const dati = righe.map(r => ({
+      'Data': r.data ? r.data.split('-').reverse().join('/') : '',
+      'Voce di lavoro': r.vocedesc || '',
+      'Quantità': r.quantita || 0,
+      'Tipo': tipoNome[r.tipo] || r.tipo || '',
+      'Note': r.note || '',
+      'Operaio': r.operaioEmail || ''
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dati);
+    // larghezze colonne
+    ws['!cols'] = [{ wch: 12 }, { wch: 32 }, { wch: 10 }, { wch: 12 }, { wch: 30 }, { wch: 26 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Avanzamento');
+
+    const nomeCantiere = (state.cantiereName || 'cantiere').replace(/[^a-zA-Z0-9]/g, '_');
+    const oggi = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(wb, `Avanzamento_${nomeCantiere}_${oggi}.xlsx`);
+    toast('Excel scaricato ✓');
+  } catch (e) { toast('Errore export: ' + e.message); }
+}
+
+// ============ TAPPA 4 — RIEPILOGO (solo admin) ============
+// Incrocia computo (previsto + prezzo) con avanzamento (realizzato)
+async function showRiepilogo() {
+  if (!window.isAdmin) { toast('Solo admin'); return; }
+  state.level = 'riepilogo';
+  updateBreadcrumb();
+  document.getElementById('fab').style.display = 'none';
+  document.getElementById('view').innerHTML = '<div class="card"><p>Calcolo riepilogo...</p></div>';
+
+  try {
+    // carico computo
+    const cSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    const computo = {};
+    cSnap.forEach(d => { const v = d.data(); computo[v.descrizione] = { prev: Number(v.quantitaPrev||0), prezzo: Number(v.prezzo||0), unita: v.unita||'' }; });
+
+    // carico avanzamento e sommo le quantità per voce
+    const aSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
+    const realizzato = {}; let extraTot = 0, extraVal = 0;
+    aSnap.forEach(d => {
+      const r = d.data();
+      const q = Number(r.quantita||0);
+      if (!realizzato[r.vocedesc]) realizzato[r.vocedesc] = { q: 0, tipo: r.tipo };
+      realizzato[r.vocedesc].q += q;
+    });
+
+    // costruisco la tabella riepilogo
+    let valorePrevisto = 0, valoreRealizzato = 0;
+    let rows = '';
+    const tutteVoci = new Set([...Object.keys(computo), ...Object.keys(realizzato)]);
+    if (tutteVoci.size === 0) {
+      document.getElementById('view').innerHTML = `<div class="empty"><div class="empty-icon">📊</div><p>Niente da riepilogare.</p></div>`;
+      return;
+    }
+    [...tutteVoci].sort().forEach(desc => {
+      const c = computo[desc] || { prev: 0, prezzo: 0, unita: '' };
+      const real = (realizzato[desc] || { q: 0 }).q;
+      const vPrev = c.prev * c.prezzo;
+      const vReal = real * c.prezzo;
+      valorePrevisto += vPrev; valoreRealizzato += vReal;
+      const perc = c.prev > 0 ? Math.round(real / c.prev * 100) : (real > 0 ? 100 : 0);
+      const fuoriComputo = !computo[desc];
+      rows += `<tr>
+        <td>${escapeHtml(desc)}${fuoriComputo ? ' <span style="color:#d97706;">extra</span>' : ''}</td>
+        <td style="text-align:right;">${c.prev} ${escapeHtml(c.unita)}</td>
+        <td style="text-align:right;">${real}</td>
+        <td style="text-align:right;">${perc}%</td>
+        <td style="text-align:right;">€ ${vReal.toFixed(2)}</td>
+      </tr>`;
+    });
+
+    document.getElementById('view').innerHTML = `
+      <div class="admin-note">👑 Riepilogo economico — visibile solo all'admin.</div>
+      <div class="card" style="padding:0; overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="background:#f3f4f6;">
+            <th style="text-align:left; padding:10px;">Voce</th>
+            <th style="text-align:right; padding:10px;">Prev.</th>
+            <th style="text-align:right; padding:10px;">Real.</th>
+            <th style="text-align:right; padding:10px;">%</th>
+            <th style="text-align:right; padding:10px;">Valore</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="card" style="background:#ecfdf5; border:1px solid #1d9e75;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span>Valore previsto (computo):</span><b>€ ${valorePrevisto.toFixed(2)}</b>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <span>Valore realizzato:</span><b>€ ${valoreRealizzato.toFixed(2)}</b>
+        </div>
+      </div>`;
+  } catch (e) {
+    document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+// ============ TAPPA 5 — FATTURE / BOLLE (con scanner) ============
+// Storage: gc_fatture/{cantiereId}/AAAAMMGG_HHMMSS.pdf
+async function showFatture() {
+  state.level = 'fatture';
+  updateBreadcrumb();
+  document.getElementById('fab').style.display = 'flex';
+  window.fabContext = 'fatture';
+  document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento documenti...</p></div>';
+
+  try {
+    const res = await fb.listAll(fb.ref(fb.storage, `gc_fatture/${state.cantiereId}`));
+    if (res.items.length === 0) {
+      document.getElementById('view').innerHTML =
+        `<div class="empty"><div class="empty-icon">📄</div><p>Nessun documento.<br>Premi + per scansionare una fattura o bolla.</p></div>`;
+      return;
+    }
+    const items = await Promise.all(res.items.map(async (it) => {
+      const url = await fb.getDownloadURL(it);
+      return { name: it.name, url, fullPath: it.fullPath };
+    }));
+    items.sort((a, b) => b.name.localeCompare(a.name));
+    let html = `<button class="secondary" style="margin-bottom:12px;" onclick="scaricaFattureZip()">📦 Scarica tutte (ZIP)</button>`;
+    items.forEach(it => {
+      html += `<div class="item">
+        <div class="item-info">
+          <div class="item-title">📄 ${escapeHtml(it.name)}</div>
+          <div class="item-sub">PDF</div>
+        </div>
+        <button class="small" style="background:#16a34a;" onclick="window.open('${it.url}','_blank')">Apri</button>
+        <button class="small danger" onclick="eliminaFattura(event,'${escapeAttr(it.fullPath)}','${escapeAttr(it.name)}')">🗑</button>
+      </div>`;
+    });
+    document.getElementById('view').innerHTML = html;
+  } catch (e) {
+    document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+async function eliminaFattura(event, fullPath, name) {
+  event.stopPropagation();
+  if (!confirm(`Eliminare il documento "${name}"?`)) return;
+  try {
+    await fb.deleteObject(fb.ref(fb.storage, fullPath));
+    toast('Documento eliminato ✓');
+    showFatture();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+// Scarica tutte le fatture del cantiere in un unico file ZIP
+async function scaricaFattureZip() {
+  if (!window.JSZip) { toast('Libreria ZIP non caricata, riprova'); return; }
+  toast('Preparazione ZIP...');
+  try {
+    const res = await fb.listAll(fb.ref(fb.storage, `gc_fatture/${state.cantiereId}`));
+    if (res.items.length === 0) { toast('Nessuna fattura da scaricare'); return; }
+
+    const zip = new JSZip();
+    let scaricate = 0;
+    for (const it of res.items) {
+      try {
+        const url = await fb.getDownloadURL(it);
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        zip.file(it.name, blob);
+        scaricate++;
+        toast(`Scaricamento ${scaricate}/${res.items.length}...`);
+      } catch (e) { console.warn('Salto', it.name, e); }
+    }
+    if (scaricate === 0) { toast('Impossibile scaricare le fatture'); return; }
+
+    toast('Compressione ZIP...');
+    const contenuto = await zip.generateAsync({ type: 'blob' });
+
+    // download del file zip
+    const nomeCantiere = (state.cantiereName || 'cantiere').replace(/[^a-zA-Z0-9]/g, '_');
+    const oggi = new Date().toISOString().split('T')[0];
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(contenuto);
+    a.download = `Fatture_${nomeCantiere}_${oggi}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    toast(`ZIP scaricato ✓ (${scaricate} fatture)`);
+  } catch (e) { toast('Errore ZIP: ' + e.message); }
+}
+
+
+
+// ---- Creazione / modifica cantiere (solo admin) ----
+async function fabAction() {
+  // il + crea cose diverse a seconda di dove sei
+  if (state.level === 'computo') { apriFormVoce(null); return; }
+  if (state.level === 'avanzamento') { apriFormAvanzamento(); return; }
+  if (state.level === 'fatture') { openPhotoModal(); return; }
+  // default: nuovo cantiere (sia admin che operai)
+  apriFormCantiere(null);
+}
+
+async function apriFormCantiere(cantiereId) {
+  let dati = { nome: '', indirizzo: '' };
+  if (cantiereId) {
+    try {
+      const d = await fb.getDoc(fb.doc(fb.db, 'gc_cantieri', cantiereId));
+      if (d.exists()) dati = { ...dati, ...d.data() };
+    } catch (e) {}
+  }
+
+  openModal(`<h2>${cantiereId ? '✏️ Modifica' : '➕ Nuovo'} cantiere</h2>
+    <label class="field-label">Nome cantiere</label>
+    <input type="text" id="cNome" value="${escapeAttr(dati.nome || '')}" placeholder="Es. Condominio Verdi">
+    <label class="field-label">Indirizzo (opzionale)</label>
+    <input type="text" id="cIndirizzo" value="${escapeAttr(dati.indirizzo || '')}" placeholder="Via, città">
+    <button class="success" onclick="salvaCantiere('${cantiereId || ''}')">${cantiereId ? 'Salva modifiche' : 'Crea cantiere'}</button>
+    <button class="secondary" style="margin-top:8px;" onclick="closeModal()">Annulla</button>`);
+}
+
+async function salvaCantiere(cantiereId) {
+  const nome = document.getElementById('cNome').value.trim();
+  const indirizzo = document.getElementById('cIndirizzo').value.trim();
+  if (!nome) { toast('Inserisci il nome'); return; }
+
+  try {
+    if (cantiereId) {
+      await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', cantiereId), { nome, indirizzo });
+      toast('Cantiere aggiornato ✓');
+    } else {
+      await fb.addDoc(fb.collection(fb.db, 'gc_cantieri'), {
+        nome, indirizzo,
+        creato: fb.serverTimestamp(),
+        creatoDa: window.currentUser.uid,
+        creatoDaEmail: window.currentUser.email
+      });
+      toast('Cantiere creato ✓');
+    }
+    closeModal();
+    showCantieri();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+function editCantiere(event, id) { event.stopPropagation(); apriFormCantiere(id); }
+
+async function eliminaCantiere(event, id, nome) {
+  event.stopPropagation();
+  if (!confirm(`Eliminare il cantiere "${nome}"?`)) return;
+  if (!confirm(`⚠️ ULTIMA CONFERMA\n\nEliminare definitivamente "${nome}"?\nVerranno persi anche computo e avanzamenti.\n\nNon reversibile.`)) return;
+  try {
+    await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', id));
+    toast('Cantiere eliminato ✓');
+    showCantieri();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+
+// ============ MOTORE SCANNER (riusato dall'app fatture) ============
+function openPhotoModal() {
+  state.photos = [];
+  openModal(`
+    <h2>📸 Scansiona fattura</h2>
+    <p style="color:#6b7280; font-size:13px; margin:0 0 12px;">
+      Scatta la foto del foglio. L'app riconosce i bordi, raddrizza e applica il filtro scansione.
+    </p>
+    <p style="background:#fef3c7; color:#92400e; font-size:12px; padding:8px 10px; border-radius:8px; margin:0 0 12px;">
+      💡 Per un ritaglio perfetto, appoggia la fattura su una superficie scura (sedile, cartellina, tavolo scuro).
+    </p>
+    <input type="file" id="photoInput" accept="image/*" capture="environment"
+           style="display:none;" onchange="onPhotoPicked(event)">
+    <button onclick="document.getElementById('photoInput').click()">📷 Scatta foto</button>
+    <div id="photoPreview" class="photo-preview"></div>
+    <div id="photoActions" style="display:none;">
+      <button class="success" style="margin-top:12px;" id="saveBtn" onclick="savePdf()">💾 Salva come PDF</button>
+    </div>
+    <button class="secondary" style="margin-top:8px;" onclick="closeModal()">Annulla</button>
+  `);
+}
+
+// 1) Foto scattata -> apri editor di ritaglio/scansione
+function onPhotoPicked(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => openScanEditor(e.target.result);
+  reader.readAsDataURL(file);
+}
+
+// 2) Editor scansione: mostra foto + 4 maniglie agli angoli del foglio rilevato
+async function openScanEditor(dataUrl) {
+  const img = await loadImage(dataUrl);
+
+  // riduco la risoluzione di lavoro per fluidità (max 2000px lato lungo)
+  const MAXW = 2000;
+  const sc = Math.min(1, MAXW / Math.max(img.width, img.height));
+  const W = Math.round(img.width * sc);
+  const H = Math.round(img.height * sc);
+
+  openModal(`
+    <h2>✂️ Sistema i bordi</h2>
+    <div class="scan-stage" id="scanStage">
+      <canvas id="scanCanvas" width="${W}" height="${H}"></canvas>
+      <svg class="scan-overlay" id="scanSvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <polygon id="scanPoly" fill="rgba(37,99,235,0.15)" stroke="#2563eb" stroke-width="3"/>
+      </svg>
+      <div class="corner-handle" data-i="0"></div>
+      <div class="corner-handle" data-i="1"></div>
+      <div class="corner-handle" data-i="2"></div>
+      <div class="corner-handle" data-i="3"></div>
+      <div class="processing-overlay" id="scanProcessing" style="display:none;">
+        <span><span class="loading"></span>Elaborazione...</span>
+      </div>
+    </div>
+    <p class="scan-hint">Trascina i 4 angoli per adattarli al foglio</p>
+    <div class="scan-filters" id="scanFilters">
+      <button data-f="bw" class="active">⬛ B/N nitido</button>
+      <button data-f="gray">◧ Grigi</button>
+      <button data-f="color">🎨 Colore</button>
+    </div>
+    <button class="success" id="applyScanBtn" onclick="applyScan()">✓ Applica scansione</button>
+    <button class="secondary" style="margin-top:8px;" onclick="reopenPhotoModal()">Annulla</button>
+  `);
+
+  // disegno la foto sul canvas
+  const canvas = document.getElementById('scanCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, W, H);
+
+  scan = {
+    dataUrl, img, W, H,
+    corners: null,
+    filter: 'bw'
+  };
+
+  // rilevamento automatico bordi
+  scan.corners = detectDocumentCorners(canvas) || defaultCorners(W, H);
+
+  setupCornerDragging();
+  drawScanPoly();
+
+  // filtri
+  document.getElementById('scanFilters').querySelectorAll('button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#scanFilters button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      scan.filter = b.dataset.f;
+    };
+  });
+}
+
+function defaultCorners(W, H) {
+  const mx = W * 0.08, my = H * 0.08;
+  return [
+    { x: mx, y: my },
+    { x: W - mx, y: my },
+    { x: W - mx, y: H - my },
+    { x: mx, y: H - my }
+  ];
+}
+
+// Rilevamento automatico del foglio con OpenCV - multi-strategia
+function detectDocumentCorners(canvas) {
+  if (!window.cv || !window.cvReady) return null;
+  const imgArea = canvas.width * canvas.height;
+  try {
+    const src = cv.imread(canvas);
+    const gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    const found = []; // candidati {mat, area}
+
+    // ---- STRATEGIA 1: Otsu (foglio chiaro su sfondo scuro) ----
+    const blur1 = new cv.Mat();
+    cv.GaussianBlur(gray, blur1, new cv.Size(9, 9), 0);
+    const th = new cv.Mat();
+    cv.threshold(blur1, th, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    // se il bianco copre troppo (sfondo chiaro come il foglio), inverto
+    if (cv.countNonZero(th) > imgArea * 0.92) cv.bitwise_not(th, th);
+    const k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(25, 25));
+    cv.morphologyEx(th, th, cv.MORPH_CLOSE, k);
+    cv.morphologyEx(th, th, cv.MORPH_OPEN, k);
+    collectBest(th, found, imgArea);
+    blur1.delete(); th.delete(); k.delete();
+
+    // ---- STRATEGIA 2: Canny (bordi netti) ----
+    const blur2 = new cv.Mat();
+    cv.GaussianBlur(gray, blur2, new cv.Size(5, 5), 0);
+    const edges = new cv.Mat();
+    cv.Canny(blur2, edges, 50, 150);
+    const k2 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 7));
+    cv.dilate(edges, edges, k2);
+    collectBest(edges, found, imgArea);
+    blur2.delete(); edges.delete(); k2.delete();
+
+    src.delete(); gray.delete();
+
+    // scelgo il candidato che meglio approssima un quadrilatero
+    let corners = null;
+    let bestQuad = null, bestRect = null;
+    for (const cand of found) {
+      const c = cand.mat;
+      const peri = cv.arcLength(c, true);
+      let isQuad = false;
+      for (const eps of [0.02, 0.03, 0.05]) {
+        const approx = new cv.Mat();
+        cv.approxPolyDP(c, approx, eps * peri, true);
+        if (approx.rows === 4 && !bestQuad) {
+          const pts = [];
+          for (let i = 0; i < 4; i++) pts.push({ x: approx.data32S[i*2], y: approx.data32S[i*2+1] });
+          bestQuad = pts;
+          isQuad = true;
+        }
+        approx.delete();
+        if (isQuad) break;
+      }
+      if (!bestRect) bestRect = rectFromContour(c);
+    }
+    if (bestQuad) corners = orderCorners(bestQuad);
+    else if (bestRect) corners = orderCorners(bestRect);
+
+    for (const cand of found) cand.mat.delete();
+    return corners;
+  } catch (e) {
+    console.warn('Rilevamento bordi fallito:', e);
+    return null;
+  }
+}
+
+// Trova il contorno valido più grande in una maschera e lo aggiunge ai candidati
+function collectBest(mask, found, imgArea) {
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  let bestIdx = -1, bestArea = 0;
+  for (let i = 0; i < contours.size(); i++) {
+    const a = cv.contourArea(contours.get(i));
+    if (a > bestArea && a > imgArea * 0.25 && a < imgArea * 0.99) { bestArea = a; bestIdx = i; }
+  }
+  if (bestIdx >= 0) found.push({ mat: contours.get(bestIdx).clone(), area: bestArea });
+  contours.delete(); hierarchy.delete();
+}
+
+// Calcola i 4 vertici del minAreaRect di un contorno
+function rectFromContour(c) {
+  const rot = cv.minAreaRect(c);
+  const cx = rot.center.x, cy = rot.center.y;
+  const w2 = rot.size.width / 2, h2 = rot.size.height / 2;
+  const ang = rot.angle * Math.PI / 180;
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const local = [[-w2,-h2],[w2,-h2],[w2,h2],[-w2,h2]];
+  return local.map(([lx, ly]) => ({ x: cx + lx*cos - ly*sin, y: cy + lx*sin + ly*cos }));
+}
+
+// ordina gli angoli: top-left, top-right, bottom-right, bottom-left
+function orderCorners(pts) {
+  const sum = pts.map(p => p.x + p.y);
+  const diff = pts.map(p => p.x - p.y);
+  return [
+    pts[sum.indexOf(Math.min(...sum))],   // TL
+    pts[diff.indexOf(Math.max(...diff))], // TR
+    pts[sum.indexOf(Math.max(...sum))],   // BR
+    pts[diff.indexOf(Math.min(...diff))]  // BL
+  ];
+}
+
+// ---- Gestione trascinamento maniglie ----
+function setupCornerDragging() {
+  const stage = document.getElementById('scanStage');
+  const handles = stage.querySelectorAll('.corner-handle');
+  positionHandles();
+
+  handles.forEach(h => {
+    const i = +h.dataset.i;
+    const move = (clientX, clientY) => {
+      const rect = document.getElementById('scanCanvas').getBoundingClientRect();
+      const x = (clientX - rect.left) / rect.width * scan.W;
+      const y = (clientY - rect.top) / rect.height * scan.H;
+      scan.corners[i] = {
+        x: Math.max(0, Math.min(scan.W, x)),
+        y: Math.max(0, Math.min(scan.H, y))
+      };
+      positionHandles();
+      drawScanPoly();
+    };
+    h.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      move(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: false });
+    let dragging = false;
+    h.addEventListener('mousedown', () => dragging = true);
+    window.addEventListener('mousemove', (e) => { if (dragging) move(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', () => dragging = false);
+  });
+}
+
+function positionHandles() {
+  const stage = document.getElementById('scanStage');
+  if (!stage) return;
+  const canvas = document.getElementById('scanCanvas');
+  const dispW = canvas.clientWidth, dispH = canvas.clientHeight;
+  stage.querySelectorAll('.corner-handle').forEach(h => {
+    const i = +h.dataset.i;
+    const c = scan.corners[i];
+    h.style.left = (c.x / scan.W * dispW) + 'px';
+    h.style.top = (c.y / scan.H * dispH) + 'px';
+  });
+}
+
+function drawScanPoly() {
+  const poly = document.getElementById('scanPoly');
+  if (!poly) return;
+  poly.setAttribute('points', scan.corners.map(c => `${c.x},${c.y}`).join(' '));
+}
+
+// 3) Applica: raddrizza (warp prospettico) + filtro, poi aggiunge alla lista pagine
+async function applyScan() {
+  document.getElementById('scanProcessing').style.display = 'flex';
+  await new Promise(r => setTimeout(r, 30)); // lascia ridisegnare
+
+  try {
+    let resultDataUrl;
+    if (window.cv && window.cvReady) {
+      resultDataUrl = warpAndFilter();
+    } else {
+      // fallback: niente OpenCV -> solo filtro sull'immagine intera
+      resultDataUrl = simpleFilter();
+    }
+    // invece di salvare subito, mostro l'anteprima per controllare l'orientamento
+    showScanPreview(resultDataUrl);
+  } catch (e) {
+    document.getElementById('scanProcessing').style.display = 'none';
+    toast('Errore scansione: ' + e.message);
+  }
+}
+
+// Anteprima del risultato con pulsante Ruota per sistemare l'orientamento
+function showScanPreview(dataUrl) {
+  openModal(`
+    <h2>👁️ Controlla l'orientamento</h2>
+    <p style="color:#6b7280; font-size:13px; margin:0 0 12px;">
+      Se il testo è girato o capovolto, premi 🔄 finché è dritto e leggibile.
+    </p>
+    <div style="text-align:center; background:#111; border-radius:10px; padding:10px; margin-bottom:10px;">
+      <img id="previewImg" src="${dataUrl}" style="max-width:100%; max-height:55vh; border-radius:4px;">
+    </div>
+    <button class="secondary" onclick="rotatePreview()">🔄 Ruota di 90°</button>
+    <button class="success" style="margin-top:8px;" onclick="confirmScan()">✓ Conferma pagina</button>
+    <button class="secondary" style="margin-top:8px;" onclick="reopenPhotoModal()">Annulla</button>
+  `);
+  scan.previewDataUrl = dataUrl;
+}
+
+// Ruota l'anteprima di 90° in senso orario
+async function rotatePreview() {
+  const img = await loadImage(scan.previewDataUrl);
+  const c = document.createElement('canvas');
+  c.width = img.height; c.height = img.width;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width, 0);
+  ctx.rotate(Math.PI/2);
+  ctx.drawImage(img, 0, 0);
+  // mantengo PNG per il B/N, JPEG per gli altri
+  const isPng = scan.previewDataUrl.startsWith('data:image/png');
+  scan.previewDataUrl = isPng ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.7);
+  document.getElementById('previewImg').src = scan.previewDataUrl;
+}
+
+// Conferma: aggiunge la pagina e torna alla schermata principale
+function confirmScan() {
+  state.photos.push({ scannedDataUrl: scan.previewDataUrl });
+  reopenPhotoModal();
+  renderPhotoPreview();
+}
+
+function warpAndFilter() {
+  const canvas = document.getElementById('scanCanvas');
+  const src = cv.imread(canvas);
+
+  const [tl, tr, br, bl] = scan.corners;
+  const wTop = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+  const wBot = Math.hypot(br.x - bl.x, br.y - bl.y);
+  const hL = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+  const hR = Math.hypot(br.x - tr.x, br.y - tr.y);
+  const outW = Math.round(Math.max(wTop, wBot));
+  const outH = Math.round(Math.max(hL, hR));
+
+  const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x,tl.y, tr.x,tr.y, br.x,br.y, bl.x,bl.y]);
+  const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0,0, outW,0, outW,outH, 0,outH]);
+  const M = cv.getPerspectiveTransform(srcTri, dstTri);
+  const dst = new cv.Mat();
+  cv.warpPerspective(src, dst, M, new cv.Size(outW, outH));
+
+  // filtro
+  if (scan.filter === 'bw') {
+    cv.cvtColor(dst, dst, cv.COLOR_RGBA2GRAY);
+    cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 15);
+  } else if (scan.filter === 'gray') {
+    cv.cvtColor(dst, dst, cv.COLOR_RGBA2GRAY);
+    cv.equalizeHist(dst, dst);
+  } else {
+    // colore migliorato: leggero aumento contrasto
+    dst.convertTo(dst, -1, 1.15, 8);
+  }
+
+  const out = document.createElement('canvas');
+  out.width = outW; out.height = outH;
+  cv.imshow(out, dst);
+
+  src.delete(); dst.delete(); M.delete(); srcTri.delete(); dstTri.delete();
+
+  // VERTICALE AUTOMATICO: se il foglio è orizzontale (più largo che alto),
+  // lo ruoto di 90° per renderlo verticale (A4 portrait)
+  let oriented = out;
+  if (out.width > out.height) {
+    oriented = rotateCanvas(out, 90);
+  }
+
+  // compressione: ridimensiona a max 1240px lato lungo (~150 DPI A4, leggibile)
+  return compressScan(oriented, scan.filter);
+}
+
+// Ruota un canvas di 90/180/270 gradi e restituisce un nuovo canvas
+function rotateCanvas(canvas, deg) {
+  const out = document.createElement('canvas');
+  const ctx = out.getContext('2d');
+  if (deg === 90 || deg === 270) {
+    out.width = canvas.height;
+    out.height = canvas.width;
+  } else {
+    out.width = canvas.width;
+    out.height = canvas.height;
+  }
+  ctx.save();
+  if (deg === 90) { ctx.translate(out.width, 0); ctx.rotate(Math.PI/2); }
+  else if (deg === 180) { ctx.translate(out.width, out.height); ctx.rotate(Math.PI); }
+  else if (deg === 270) { ctx.translate(0, out.height); ctx.rotate(-Math.PI/2); }
+  ctx.drawImage(canvas, 0, 0);
+  ctx.restore();
+  return out;
+}
+
+// Ridimensiona + comprime per file piccolo ma leggibile
+function compressScan(canvas, filter) {
+  const MAX_SIDE = 1900;
+  let { width: w, height: h } = canvas;
+  const sc = Math.min(1, MAX_SIDE / Math.max(w, h));
+  const nw = Math.round(w * sc), nh = Math.round(h * sc);
+
+  const small = document.createElement('canvas');
+  small.width = nw; small.height = nh;
+  const sctx = small.getContext('2d');
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(canvas, 0, 0, nw, nh);
+
+  // B/N: PNG (1 livello) comprime meglio del JPEG per testo nero su bianco.
+  // Grigi/Colore: JPEG con qualità media.
+  if (filter === 'bw') {
+    return small.toDataURL('image/png');
+  } else if (filter === 'gray') {
+    return small.toDataURL('image/jpeg', 0.6);
+  } else {
+    return small.toDataURL('image/jpeg', 0.65);
+  }
+}
+
+// Fallback senza OpenCV: applica solo un filtro b/n base
+function simpleFilter() {
+  const canvas = document.getElementById('scanCanvas');
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  if (scan.filter !== 'color') {
+    for (let i = 0; i < d.length; i += 4) {
+      let v = 0.3*d[i] + 0.59*d[i+1] + 0.11*d[i+2];
+      if (scan.filter === 'bw') v = v > 135 ? 255 : 0;
+      d[i] = d[i+1] = d[i+2] = v;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+  return compressScan(canvas, scan.filter);
+}
+
+function reopenPhotoModal() {
+  scan = null;
+  // riapre la schermata principale mantenendo le pagine già fatte
+  openModal(`
+    <h2>📸 Scansiona fattura</h2>
+    <p style="color:#6b7280; font-size:13px; margin:0 0 12px;">
+      Aggiungi altre pagine o salva il PDF.
+    </p>
+    <input type="file" id="photoInput" accept="image/*" capture="environment"
+           style="display:none;" onchange="onPhotoPicked(event)">
+    <button onclick="document.getElementById('photoInput').click()">📷 Aggiungi pagina</button>
+    <div id="photoPreview" class="photo-preview"></div>
+    <div id="photoActions" style="display:none;">
+      <button class="success" style="margin-top:12px;" id="saveBtn" onclick="savePdf()">💾 Salva come PDF</button>
+    </div>
+    <button class="secondary" style="margin-top:8px;" onclick="closeModal()">Annulla</button>
+  `);
+  renderPhotoPreview();
+}
+
+function renderPhotoPreview() {
+  const c = document.getElementById('photoPreview');
+  if (!c) return;
+  c.innerHTML = state.photos.map((p, i) =>
+    `<div class="photo-thumb">
+      <img src="${p.scannedDataUrl}">
+      <div class="remove" onclick="removePhoto(${i})">×</div>
+      <div class="rotate-btn" onclick="rotatePage(${i})">🔄</div>
+    </div>`
+  ).join('');
+  const actions = document.getElementById('photoActions');
+  if (actions) actions.style.display = state.photos.length > 0 ? 'block' : 'none';
+}
+
+function removePhoto(i) {
+  state.photos.splice(i, 1);
+  renderPhotoPreview();
+}
+
+// Ruota una pagina già scansionata (dalle miniature)
+async function rotatePage(i) {
+  const img = await loadImage(state.photos[i].scannedDataUrl);
+  const c = document.createElement('canvas');
+  c.width = img.height; c.height = img.width;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width, 0);
+  ctx.rotate(Math.PI/2);
+  ctx.drawImage(img, 0, 0);
+  const isPng = state.photos[i].scannedDataUrl.startsWith('data:image/png');
+  state.photos[i].scannedDataUrl = isPng ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.7);
+  renderPhotoPreview();
+}
+
+async function savePdf() {
+  if (state.photos.length === 0) { toast('Nessuna pagina'); return; }
+  const btn = document.getElementById('saveBtn');
+  btn.innerHTML = '<span class="loading"></span>Generazione PDF...';
+  btn.disabled = true;
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
+    const pageW = 210, pageH = 297;
+
+    for (let i = 0; i < state.photos.length; i++) {
+      const dataUrl = state.photos[i].scannedDataUrl;
+      const img = await loadImage(dataUrl);
+      const ratio = Math.min(pageW / img.width, pageH / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      const x = (pageW - w) / 2;
+      const y = (pageH - h) / 2;
+      if (i > 0) pdf.addPage();
+      // rileva il formato dall'header del dataURL (PNG per B/N, JPEG per gli altri)
+      const fmt = dataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+      pdf.addImage(dataUrl, fmt, x, y, w, h, undefined, 'FAST');
+    }
+
+    const blob = pdf.output('blob');
+    btn.innerHTML = '<span class="loading"></span>Caricamento...';
+
+    const ts = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const fileName = `${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.pdf`;
+    const path = `gc_fatture/${state.cantiereId}/${fileName}`;
+
+    await fb.uploadBytes(fb.ref(fb.storage, path), blob, {
+      contentType: 'application/pdf',
+      customMetadata: { caricatoDa: (window.currentUser && window.currentUser.email) || 'sconosciuto' }
+    });
+
+    const kb = Math.round(blob.size / 1024);
+    closeModal();
+    toast(`Fattura salvata ✓ (${kb} KB)`);
+    showFatture();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '💾 Salva come PDF';
+    toast('Errore: ' + e.message);
+  }
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+
+// export globali
+window.login = login;
+window.logout = logout;
+window.closeModal = closeModal;
+window.showCantieri = showCantieri;
+window.apriCantiere = apriCantiere;
+window.fabAction = fabAction;
+window.apriFormCantiere = apriFormCantiere;
+window.salvaCantiere = salvaCantiere;
+window.editCantiere = editCantiere;
+window.eliminaCantiere = eliminaCantiere;
+window.showComputo = showComputo;
+window.showAvanzamento = showAvanzamento;
+window.showFatture = showFatture;
+window.apriFormVoce = apriFormVoce;
+window.salvaVoce = salvaVoce;
+window.editVoce = editVoce;
+window.eliminaVoce = eliminaVoce;
+window.apriFormAvanzamento = apriFormAvanzamento;
+window.salvaAvanzamento = salvaAvanzamento;
+window.eliminaAvanzamento = eliminaAvanzamento;
+window.esportaAvanzamentoExcel = esportaAvanzamentoExcel;
+window.showRiepilogo = showRiepilogo;
+window.eliminaFattura = eliminaFattura;
+window.scaricaFattureZip = scaricaFattureZip;
+window.openPhotoModal = openPhotoModal;
+window.onPhotoPicked = onPhotoPicked;
+window.applyScan = applyScan;
+window.rotatePreview = rotatePreview;
+window.confirmScan = confirmScan;
+window.reopenPhotoModal = reopenPhotoModal;
+window.removePhoto = removePhoto;
+window.rotatePage = rotatePage;
+window.savePdf = savePdf;
+</script>
+</body>
+</html>
