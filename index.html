@@ -550,7 +550,7 @@ async function showAvanzamento() {
       html += `<div class="item">
         <div class="item-info">
           <div class="item-title">${escapeHtml(r.vocedesc || '?')}${tipoBadge[r.tipo] || ''}</div>
-          <div class="item-sub">📅 ${dataIt} · Quantità: ${r.quantita || 0}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
+          <div class="item-sub">📅 ${dataIt} · Quantità: ${r.quantita || 0} ${escapeHtml(r.unita || '')}${r.note ? ' · ' + escapeHtml(r.note) : ''}</div>
           ${window.isAdmin && r.operaioEmail ? `<div class="item-sub">👤 ${escapeHtml(r.operaioEmail)}</div>` : ''}
         </div>
         ${btn}
@@ -587,7 +587,20 @@ async function apriFormAvanzamento() {
     <label class="field-label">Data</label>
     <input type="date" id="aData" value="${oggi}">
     <label class="field-label">Quantità realizzata</label>
-    <input type="number" id="aQta" step="0.01" placeholder="0">
+    <div style="display:flex; gap:8px;">
+      <input type="number" id="aQta" step="0.01" placeholder="0" style="flex:2;">
+      <select id="aUnita" style="flex:1; padding:12px; border:1px solid #d1d5db; border-radius:8px; font-size:15px; margin-bottom:10px;">
+        <option value="mt">mt</option>
+        <option value="cm">cm</option>
+        <option value="mq">mq</option>
+        <option value="mc">mc</option>
+        <option value="kg">kg</option>
+        <option value="gr">gr</option>
+        <option value="nr">nr</option>
+        <option value="lt">lt</option>
+        <option value="ore">ore</option>
+      </select>
+    </div>
     <label class="field-label">Tipo</label>
     <select id="aTipo" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;margin-bottom:10px;">
       <option value="normale">Lavoro normale (da computo)</option>
@@ -612,6 +625,7 @@ async function salvaAvanzamento() {
     : sel;
   const data = document.getElementById('aData').value;
   const quantita = parseFloat(document.getElementById('aQta').value) || 0;
+  const unita = document.getElementById('aUnita').value;
   const tipo = document.getElementById('aTipo').value;
   const note = document.getElementById('aNote').value.trim();
 
@@ -620,7 +634,7 @@ async function salvaAvanzamento() {
 
   try {
     await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'), {
-      vocedesc, data, quantita, tipo, note,
+      vocedesc, data, quantita, unita, tipo, note,
       operaioUid: window.currentUser.uid,
       operaioEmail: window.currentUser.email,
       creato: fb.serverTimestamp()
@@ -659,6 +673,7 @@ async function esportaAvanzamentoExcel() {
       'Data': r.data ? r.data.split('-').reverse().join('/') : '',
       'Voce di lavoro': r.vocedesc || '',
       'Quantità': r.quantita || 0,
+      'Unità': r.unita || '',
       'Tipo': tipoNome[r.tipo] || r.tipo || '',
       'Note': r.note || '',
       'Operaio': r.operaioEmail || ''
@@ -666,7 +681,7 @@ async function esportaAvanzamentoExcel() {
 
     const ws = XLSX.utils.json_to_sheet(dati);
     // larghezze colonne
-    ws['!cols'] = [{ wch: 12 }, { wch: 32 }, { wch: 10 }, { wch: 12 }, { wch: 30 }, { wch: 26 }];
+    ws['!cols'] = [{ wch: 12 }, { wch: 32 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 26 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Avanzamento');
 
