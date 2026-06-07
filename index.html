@@ -219,6 +219,7 @@ onAuthStateChanged(auth, async (user) => {
 <!-- jsPDF + OpenCV per scanner fatture -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
   window.cvReady = false;
@@ -530,7 +531,6 @@ async function caricaComputoPdf(input) {
   const file = input.files && input.files[0];
   if (!file) return;
   if (file.type !== 'application/pdf') { toast('Seleziona un file PDF'); input.value = ''; return; }
-  // limite di sicurezza ~8 MB (le chiamate onCall hanno un tetto)
   if (file.size > 8 * 1024 * 1024) { toast('PDF troppo grande (max 8 MB)'); input.value = ''; return; }
 
   toast('Caricamento su Drive in corso...');
@@ -543,21 +543,31 @@ async function caricaComputoPdf(input) {
       r.readAsDataURL(file);
     });
 
-    // nome file: data + nome cantiere + nome originale
     const oggi = new Date().toISOString().split('T')[0];
     const fileName = `${oggi}_${file.name}`;
 
-    const fn = fb.httpsCallable(fb.functions, 'caricaComputoSuDrive');
-    const resp = await fn({
-      fileBase64: base64,
-      fileName: fileName,
-      cantiereNome: state.cantiereName || ''
+    // token Firebase dell'utente loggato, per autenticare la chiamata
+    const token = await window.currentUser.getIdToken();
+
+    const URL_FUNZIONE = 'https://europe-west1-gama-service.cloudfunctions.net/caricaComputoSuDrive';
+    const resp = await fetch(URL_FUNZIONE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify({
+        fileBase64: base64,
+        fileName: fileName,
+        cantiereNome: state.cantiereName || ''
+      })
     });
 
-    if (resp.data && resp.data.ok) {
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
       toast('Computo caricato su Drive ✓');
     } else {
-      toast('Caricamento completato');
+      toast('Errore Drive: ' + (data.error || 'riprova'));
     }
   } catch (e) {
     console.error(e);
@@ -749,9 +759,9 @@ async function eliminaAvanzamento(event, id) {
   } catch (e) { toast('Errore: ' + e.message); }
 }
 
-// Esporta l'avanzamento in Excel (senza prezzi - va bene per tutti)
+// Esporta l'avanzamento in Excel con intestazione arancione Gama (#f59014)
 async function esportaAvanzamentoExcel() {
-  if (!window.XLSX) { toast('Libreria Excel non caricata, riprova'); return; }
+  if (!window.ExcelJS) { toast('Libreria Excel non caricata, riprova'); return; }
   toast('Genero Excel...');
   try {
     const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
@@ -761,7 +771,7 @@ async function esportaAvanzamentoExcel() {
 
     if (righe.length === 0) { toast('Nessun avanzamento da esportare'); return; }
 
-    // per l'admin: carico i prezzi dal computo per la colonna €
+    // per l'admin: prezzi dal computo per la colonna €
     let prezzi = {};
     if (window.isAdmin) {
       try {
@@ -771,34 +781,70 @@ async function esportaAvanzamentoExcel() {
     }
 
     const tipoNome = { normale: 'Normale', extra: 'Extra', variante: 'Variante' };
-    // intestazioni + righe (la colonna € SOLO per l'admin)
-    const dati = righe.map(r => {
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Avanzamento');
+
+    // colonne (la € solo per admin)
+    const colonne = [
+      { header: 'Data', key: 'data', width: 14 },
+      { header: 'Voce di lavoro', key: 'voce', width: 34 },
+      { header: 'Quantità', key: 'qta', width: 12 },
+      { header: 'Unità', key: 'unita', width: 10 },
+      { header: 'Tipo', key: 'tipo', width: 12 },
+      { header: 'Note', key: 'note', width: 30 },
+      { header: 'Operaio', key: 'operaio', width: 28 }
+    ];
+    if (window.isAdmin) colonne.push({ header: '€', key: 'euro', width: 12 });
+    ws.columns = colonne;
+
+    // righe dati
+    righe.forEach(r => {
       const riga = {
-        'Data': r.data ? r.data.split('-').reverse().join('/') : '',
-        'Voce di lavoro': r.vocedesc || '',
-        'Quantità': r.quantita || 0,
-        'Unità': r.unita || '',
-        'Tipo': tipoNome[r.tipo] || r.tipo || '',
-        'Note': r.note || '',
-        'Operaio': r.operaioEmail || ''
+        data: r.data ? r.data.split('-').reverse().join('/') : '',
+        voce: r.vocedesc || '',
+        qta: r.quantita || 0,
+        unita: r.unita || '',
+        tipo: tipoNome[r.tipo] || r.tipo || '',
+        note: r.note || '',
+        operaio: r.operaioEmail || ''
       };
-      if (window.isAdmin) {
-        riga['€'] = Number((Number(r.quantita || 0) * (prezzi[r.vocedesc] || 0)).toFixed(2));
-      }
-      return riga;
+      if (window.isAdmin) riga.euro = Number((Number(r.quantita || 0) * (prezzi[r.vocedesc] || 0)).toFixed(2));
+      ws.addRow(riga);
     });
 
-    const ws = XLSX.utils.json_to_sheet(dati);
-    // larghezze colonne (8 se admin per la colonna €)
-    ws['!cols'] = window.isAdmin
-      ? [{ wch: 12 }, { wch: 32 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 26 }, { wch: 12 }]
-      : [{ wch: 12 }, { wch: 32 }, { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 26 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Avanzamento');
+    // stile intestazione: sfondo arancione Gama, testo bianco grassetto
+    const header = ws.getRow(1);
+    header.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF59014' } };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFD97F0A' } },
+        bottom: { style: 'thin', color: { argb: 'FFD97F0A' } }
+      };
+    });
+    header.height = 20;
 
+    // bordo leggero alle righe dati
+    for (let i = 2; i <= righe.length + 1; i++) {
+      ws.getRow(i).eachCell((cell) => {
+        cell.border = { bottom: { style: 'hair', color: { argb: 'FFDDDDDD' } } };
+      });
+    }
+
+    // genera e scarica
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const nomeCantiere = (state.cantiereName || 'cantiere').replace(/[^a-zA-Z0-9]/g, '_');
     const oggi = new Date().toISOString().split('T')[0];
-    XLSX.writeFile(wb, `Avanzamento_${nomeCantiere}_${oggi}.xlsx`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Avanzamento_${nomeCantiere}_${oggi}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
     toast('Excel scaricato ✓');
   } catch (e) { toast('Errore export: ' + e.message); }
 }
