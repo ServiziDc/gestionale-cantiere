@@ -168,6 +168,8 @@ import { getFirestore, collection, doc, getDoc, addDoc, setDoc, updateDoc, getDo
   from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, listAll }
   from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+import { getFunctions, httpsCallable }
+  from "https://www.gstatic.com/firebasejs/10.7.1/firebase-functions.js";
 
 // Config Firebase - progetto gama-service (stesso del gestionale ore)
 const firebaseConfig = {
@@ -184,10 +186,11 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
+const functions = getFunctions(app, "europe-west1");
 
-window.fb = { auth, db, storage, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+window.fb = { auth, db, storage, functions, signInWithEmailAndPassword, signOut, onAuthStateChanged,
   collection, doc, getDoc, addDoc, setDoc, updateDoc, getDocs, deleteDoc, query, where, serverTimestamp,
-  ref, uploadBytes, getDownloadURL, deleteObject, listAll };
+  ref, uploadBytes, getDownloadURL, deleteObject, listAll, httpsCallable };
 
 onAuthStateChanged(auth, async (user) => {
   const loginScreen = document.getElementById('loginScreen');
@@ -394,6 +397,12 @@ async function showComputo() {
   document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento computo...</p></div>';
 
   try {
+    // pulsante per caricare il PDF del computo su Drive (operaio o admin del cantiere)
+    const barraPdf = puoModificare
+      ? `<input type="file" id="computoPdfInput" accept="application/pdf" style="display:none;" onchange="caricaComputoPdf(this)">
+         <button class="secondary" style="margin-bottom:12px;" onclick="document.getElementById('computoPdfInput').click()">📎 Carica computo PDF su Drive</button>`
+      : '';
+
     const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
     let voci = [];
     snap.forEach(d => voci.push({ id: d.id, ...d.data() }));
@@ -401,13 +410,13 @@ async function showComputo() {
 
     if (voci.length === 0) {
       const hint = puoModificare ? '<br>Premi + per aggiungere una voce.' : '';
-      document.getElementById('view').innerHTML =
+      document.getElementById('view').innerHTML = barraPdf +
         `<div class="empty"><div class="empty-icon">📋</div><p>Nessuna voce nel computo.${hint}</p></div>`;
       return;
     }
 
     let totaleEuro = 0;
-    let html = '';
+    let html = barraPdf;
     if (window.isAdmin) html += `<div class="admin-note">👑 Vedi i prezzi e il valore totale (solo admin).</div>`;
     voci.forEach(v => {
       const qta = Number(v.quantitaPrev || 0);
@@ -514,6 +523,48 @@ async function eliminaVoce(event, id, desc) {
     toast('Voce eliminata ✓');
     showComputo();
   } catch (e) { toast('Errore: ' + e.message); }
+}
+
+// Carica il PDF del computo sul Drive aziendale tramite la Cloud Function
+async function caricaComputoPdf(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.type !== 'application/pdf') { toast('Seleziona un file PDF'); input.value = ''; return; }
+  // limite di sicurezza ~8 MB (le chiamate onCall hanno un tetto)
+  if (file.size > 8 * 1024 * 1024) { toast('PDF troppo grande (max 8 MB)'); input.value = ''; return; }
+
+  toast('Caricamento su Drive in corso...');
+  try {
+    // converto il PDF in base64
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = () => rej(new Error('Lettura file fallita'));
+      r.readAsDataURL(file);
+    });
+
+    // nome file: data + nome cantiere + nome originale
+    const oggi = new Date().toISOString().split('T')[0];
+    const fileName = `${oggi}_${file.name}`;
+
+    const fn = fb.httpsCallable(fb.functions, 'caricaComputoSuDrive');
+    const resp = await fn({
+      fileBase64: base64,
+      fileName: fileName,
+      cantiereNome: state.cantiereName || ''
+    });
+
+    if (resp.data && resp.data.ok) {
+      toast('Computo caricato su Drive ✓');
+    } else {
+      toast('Caricamento completato');
+    }
+  } catch (e) {
+    console.error(e);
+    toast('Errore Drive: ' + (e.message || 'riprova'));
+  } finally {
+    input.value = '';
+  }
 }
 
 // ============ TAPPA 3 — AVANZAMENTO GIORNALIERO ============
@@ -1480,6 +1531,7 @@ window.apriFormVoce = apriFormVoce;
 window.salvaVoce = salvaVoce;
 window.editVoce = editVoce;
 window.eliminaVoce = eliminaVoce;
+window.caricaComputoPdf = caricaComputoPdf;
 window.apriFormAvanzamento = apriFormAvanzamento;
 window.salvaAvanzamento = salvaAvanzamento;
 window.eliminaAvanzamento = eliminaAvanzamento;
