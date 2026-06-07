@@ -412,7 +412,9 @@ async function showComputo() {
     if (voci.length === 0) {
       const hint = puoModificare ? '<br>Premi + per aggiungere una voce.' : '';
       document.getElementById('view').innerHTML = barraPdf +
-        `<div class="empty"><div class="empty-icon">📋</div><p>Nessuna voce nel computo.${hint}</p></div>`;
+        `<div class="empty"><div class="empty-icon">📋</div><p>Nessuna voce nel computo.${hint}</p></div>` +
+        `<div id="listaPdfComputo"></div>`;
+      caricaListaComputiPdf();
       return;
     }
 
@@ -445,9 +447,47 @@ async function showComputo() {
       html += `<div class="card" style="background:#ecfdf5; border:1px solid #1d9e75;">
         <b>Valore totale computo: € ${totaleEuro.toFixed(2)}</b></div>`;
     }
+    html += `<div id="listaPdfComputo"></div>`;
     document.getElementById('view').innerHTML = html;
+    caricaListaComputiPdf();
   } catch (e) {
     document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+// Carica e mostra l'elenco dei PDF del computo dal Drive (con tasto Visualizza)
+async function caricaListaComputiPdf() {
+  const box = document.getElementById('listaPdfComputo');
+  if (!box) return;
+  box.innerHTML = `<div class="card" style="color:#6b7280; font-size:13px;">Carico i computi PDF dal Drive...</div>`;
+  try {
+    const token = await window.currentUser.getIdToken();
+    const URL_ELENCO = 'https://europe-west1-gama-service.cloudfunctions.net/elencaComputiDrive';
+    const resp = await fetch(URL_ELENCO + '?cantiere=' + encodeURIComponent(state.cantiereName || ''), {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      box.innerHTML = `<div class="card" style="color:#dc2626; font-size:13px;">Impossibile leggere i computi: ${(data && data.error) || 'errore'}</div>`;
+      return;
+    }
+    if (!data.files || data.files.length === 0) {
+      box.innerHTML = `<div class="card" style="color:#6b7280; font-size:13px;">Nessun computo PDF caricato per questo cantiere.</div>`;
+      return;
+    }
+    let h = `<div style="margin:14px 0 6px; font-weight:600;">📑 Computi PDF caricati</div>`;
+    data.files.forEach(f => {
+      h += `<div class="item">
+        <div class="item-info">
+          <div class="item-title">📄 ${escapeHtml(f.name)}</div>
+        </div>
+        <button class="small" style="background:#16a34a;" onclick="window.open('${f.link}','_blank')">Visualizza</button>
+      </div>`;
+    });
+    box.innerHTML = h;
+  } catch (e) {
+    box.innerHTML = `<div class="card" style="color:#dc2626; font-size:13px;">Errore lettura computi: ${e.message}</div>`;
   }
 }
 
@@ -559,7 +599,8 @@ async function caricaComputoPdf(input) {
       body: JSON.stringify({
         fileBase64: base64,
         fileName: fileName,
-        cantiereNome: state.cantiereName || ''
+        cantiereNome: state.cantiereName || '',
+        cantiereId: state.cantiereId || ''
       })
     });
 
@@ -1638,6 +1679,7 @@ window.salvaVoce = salvaVoce;
 window.editVoce = editVoce;
 window.eliminaVoce = eliminaVoce;
 window.caricaComputoPdf = caricaComputoPdf;
+window.caricaListaComputiPdf = caricaListaComputiPdf;
 window.apriFormAvanzamento = apriFormAvanzamento;
 window.salvaAvanzamento = salvaAvanzamento;
 window.eliminaAvanzamento = eliminaAvanzamento;
