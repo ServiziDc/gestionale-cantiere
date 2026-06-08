@@ -333,8 +333,8 @@ async function showCantieri() {
       // chi può modificare/eliminare: il creatore oppure l'admin
       const puoGestire = window.isAdmin || c.creatoDa === window.currentUser.uid;
       const adminBtns = puoGestire
-        ? `<button class="small secondary" onclick="editCantiere(event,'${c.id}')">✏️</button>
-           <button class="small danger" onclick="eliminaCantiere(event,'${c.id}','${escapeAttr(c.nome)}')">🗑</button>`
+        ? `<button class="small secondary" onclick="editCantiere(event,'${c.id}')">✏️ Modifica</button>
+           <button class="small danger" onclick="eliminaCantiere(event,'${c.id}','${escapeAttr(c.nome)}')">🗑 Elimina</button>`
         : '';
       const sottotitolo = window.isAdmin
         ? `${escapeHtml(c.indirizzo || 'Nessun indirizzo')} · 👤 ${escapeHtml(c.creatoDaEmail || '?')}`
@@ -496,6 +496,7 @@ async function caricaListaComputiPdf() {
           <div class="item-title">📄 ${escapeHtml(f.name)}</div>
         </div>
         <button class="small" style="background:#16a34a;" onclick="visualizzaPdf('${f.id}','${escapeAttr(f.name)}')">Visualizza</button>
+        <button class="small danger" onclick="eliminaComputoPdf('${f.id}','${escapeAttr(f.name)}')">🗑</button>
       </div>`;
     });
     box.innerHTML = h;
@@ -588,6 +589,30 @@ async function visualizzaPdf(fileId, nome) {
 function chiudiPdf() {
   const overlay = document.getElementById('pdfOverlay');
   if (overlay) { overlay.style.display = 'none'; overlay.innerHTML = ''; }
+}
+
+// Elimina un PDF del computo dal Drive (creatore del cantiere o admin)
+async function eliminaComputoPdf(fileId, nome) {
+  if (!confirm(`Eliminare il computo "${nome}"?\nQuesta azione non è reversibile.`)) return;
+  toast('Eliminazione in corso...');
+  try {
+    const token = await window.currentUser.getIdToken();
+    const URL_ELIMINA = 'https://europe-west1-gama-service.cloudfunctions.net/eliminaComputoDrive';
+    const resp = await fetch(URL_ELIMINA, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ fileId: fileId, cantiereId: state.cantiereId || '' })
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      toast('Computo eliminato ✓');
+      caricaListaComputiPdf(); // ricarico la lista
+    } else {
+      toast('Errore: ' + (data.error || 'eliminazione fallita'));
+    }
+  } catch (e) {
+    toast('Errore: ' + e.message);
+  }
 }
 
 // verifica se l'utente corrente è creatore del cantiere o admin
@@ -959,7 +984,7 @@ async function esportaAvanzamentoExcel() {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Avanzamento');
 
-    // colonne (la € solo per admin)
+    // colonne (Prezzo unit. e Totale solo per admin)
     const colonne = [
       { header: 'Data', key: 'data', width: 14 },
       { header: 'Voce di lavoro', key: 'voce', width: 34 },
@@ -969,15 +994,21 @@ async function esportaAvanzamentoExcel() {
       { header: 'Note', key: 'note', width: 30 },
       { header: 'Operaio', key: 'operaio', width: 28 }
     ];
-    if (window.isAdmin) colonne.push({ header: '€', key: 'euro', width: 12 });
+    if (window.isAdmin) {
+      colonne.push({ header: 'Prezzo unit.', key: 'prezzo', width: 14 });
+      colonne.push({ header: 'Totale', key: 'totale', width: 14 });
+    }
     ws.columns = colonne;
 
     // righe dati
+    // con admin: C=Quantità, H=Prezzo unit., I=Totale  → formula I = C*H
+    let rowIndex = 1; // riga 1 = intestazione
     righe.forEach(r => {
+      rowIndex++;
       const riga = {
         data: r.data ? r.data.split('-').reverse().join('/') : '',
         voce: r.vocedesc || '',
-        qta: r.quantita || 0,
+        qta: Number(r.quantita || 0),
         unita: r.unita || '',
         tipo: tipoNome[r.tipo] || r.tipo || '',
         note: r.note || '',
@@ -985,10 +1016,22 @@ async function esportaAvanzamentoExcel() {
       };
       if (window.isAdmin) {
         const prezzoRiga = (r.prezzoUnitario != null) ? Number(r.prezzoUnitario) : Number(prezzi[r.vocedesc] || 0);
-        riga.euro = Number((Number(r.quantita || 0) * prezzoRiga).toFixed(2));
+        riga.prezzo = prezzoRiga;
+        // formula vera: Totale = Quantità (col C) × Prezzo unit. (col H)
+        riga.totale = { formula: `C${rowIndex}*H${rowIndex}` };
       }
       ws.addRow(riga);
     });
+
+    // riga somma finale (solo admin): SOMMA della colonna Totale
+    if (window.isAdmin && righe.length > 0) {
+      const rigaSomma = ws.addRow({ note: 'TOTALE COMPLESSIVO' });
+      const colTotale = 'I'; // colonna Totale
+      const cellaSomma = rigaSomma.getCell(9); // I = 9
+      cellaSomma.value = { formula: `SUM(${colTotale}2:${colTotale}${rowIndex})` };
+      cellaSomma.font = { bold: true };
+      rigaSomma.getCell(6).font = { bold: true }; // "TOTALE COMPLESSIVO" in grassetto (col F=6)
+    }
 
     // colori intestazione per nome colonna (come da file di Simone), testo nero
     const coloriHeader = {
@@ -999,7 +1042,8 @@ async function esportaAvanzamentoExcel() {
       'Tipo': 'FFFFFF00',            // giallo
       'Note': 'FF00B0F0',            // azzurro
       'Operaio': 'FF3333FF',         // blu
-      '€': 'FF00FF00'                // verde acceso
+      'Prezzo unit.': 'FF00FF00',    // verde acceso
+      'Totale': 'FF00B050'           // verde scuro
     };
     const header = ws.getRow(1);
     header.eachCell((cell) => {
@@ -1258,8 +1302,8 @@ function editCantiere(event, id) { event.stopPropagation(); apriFormCantiere(id)
 
 async function eliminaCantiere(event, id, nome) {
   event.stopPropagation();
-  if (!confirm(`Eliminare il cantiere "${nome}"?`)) return;
-  if (!confirm(`⚠️ ULTIMA CONFERMA\n\nEliminare definitivamente "${nome}"?\nVerranno persi anche computo e avanzamenti.\n\nNon reversibile.`)) return;
+  if (!confirm(`Sei sicuro di voler eliminare il cantiere "${nome}"?`)) return;
+  if (!confirm(`⚠️ CONFERMA DEFINITIVA\n\nEliminare davvero "${nome}"?\nVerranno persi anche computo e avanzamenti del cantiere.\n\nL'azione non è reversibile.`)) return;
   try {
     await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', id));
     toast('Cantiere eliminato ✓');
@@ -1827,6 +1871,7 @@ window.editVoce = editVoce;
 window.eliminaVoce = eliminaVoce;
 window.caricaComputoPdf = caricaComputoPdf;
 window.caricaListaComputiPdf = caricaListaComputiPdf;
+window.eliminaComputoPdf = eliminaComputoPdf;
 window.visualizzaPdf = visualizzaPdf;
 window.chiudiPdf = chiudiPdf;
 window.apriFormAvanzamento = apriFormAvanzamento;
