@@ -123,6 +123,10 @@
   .pdf-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #0f6e56; color: white; font-weight: 600; }
   .pdf-modal-head button { background: rgba(255,255,255,0.2); color: white; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
   .pdf-modal iframe { flex: 1; width: 100%; border: none; }
+  .pdf-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; }
+  .pdf-perc { font-size: 42px; font-weight: 700; color: #0f6e56; margin-bottom: 14px; }
+  .pdf-bar { width: 80%; max-width: 300px; height: 10px; background: #e5e7eb; border-radius: 6px; overflow: hidden; }
+  .pdf-bar-fill { height: 100%; width: 0%; background: #1d9e75; transition: width 0.2s; }
 </style>
 </head>
 <body>
@@ -500,24 +504,85 @@ async function caricaListaComputiPdf() {
   }
 }
 
-// Apre il PDF in un modale a tutto schermo dentro l'app
-function visualizzaPdf(fileId, nome) {
-  const previewUrl = `https://drive.google.com/file/d/${fileId}/preview`;
+// Apre il PDF in un modale, scaricandolo con percentuale di avanzamento
+async function visualizzaPdf(fileId, nome) {
   let overlay = document.getElementById('pdfOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'pdfOverlay';
     document.body.appendChild(overlay);
   }
+  // schermata iniziale con percentuale
   overlay.innerHTML = `
     <div class="pdf-modal">
       <div class="pdf-modal-head">
         <span>📄 ${escapeHtml(nome)}</span>
         <button onclick="chiudiPdf()">✕ Chiudi</button>
       </div>
-      <iframe src="${previewUrl}" allow="autoplay"></iframe>
+      <div class="pdf-loading">
+        <div class="pdf-perc" id="pdfPerc">0%</div>
+        <div class="pdf-bar"><div class="pdf-bar-fill" id="pdfBarFill"></div></div>
+        <div style="color:#6b7280; font-size:13px; margin-top:10px;">Caricamento PDF...</div>
+      </div>
     </div>`;
   overlay.style.display = 'flex';
+
+  try {
+    const token = await window.currentUser.getIdToken();
+    const URL_SCARICA = 'https://europe-west1-gama-service.cloudfunctions.net/scaricaComputo'
+      + '?fileId=' + encodeURIComponent(fileId)
+      + '&cantiereId=' + encodeURIComponent(state.cantiereId || '');
+
+    // uso XMLHttpRequest per seguire la percentuale di download
+    const risposta = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', URL_SCARICA);
+      xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+      xhr.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const perc = Math.round(e.loaded / e.total * 100);
+          const pEl = document.getElementById('pdfPerc');
+          const bEl = document.getElementById('pdfBarFill');
+          if (pEl) pEl.textContent = perc + '%';
+          if (bEl) bEl.style.width = perc + '%';
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) resolve(xhr.responseText);
+        else reject(new Error('Errore ' + xhr.status));
+      };
+      xhr.onerror = () => reject(new Error('Errore di rete'));
+      xhr.send();
+    });
+
+    const data = JSON.parse(risposta);
+    if (!data.ok || !data.base64) {
+      throw new Error(data.error || 'PDF non disponibile');
+    }
+
+    // mostro il PDF dai dati scaricati (blob locale = veloce)
+    const bytes = Uint8Array.from(atob(data.base64), c => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const modal = overlay.querySelector('.pdf-modal');
+    modal.innerHTML = `
+      <div class="pdf-modal-head">
+        <span>📄 ${escapeHtml(nome)}</span>
+        <button onclick="chiudiPdf()">✕ Chiudi</button>
+      </div>
+      <iframe src="${blobUrl}"></iframe>`;
+  } catch (e) {
+    const modal = overlay.querySelector('.pdf-modal');
+    if (modal) {
+      modal.innerHTML = `
+        <div class="pdf-modal-head">
+          <span>📄 ${escapeHtml(nome)}</span>
+          <button onclick="chiudiPdf()">✕ Chiudi</button>
+        </div>
+        <div class="pdf-loading" style="color:#dc2626;">Errore: ${e.message}</div>`;
+    }
+  }
 }
 
 function chiudiPdf() {
@@ -708,17 +773,25 @@ async function showAvanzamento() {
       const puoGestire = window.isAdmin || r.operaioUid === window.currentUser.uid;
       const btn = puoGestire
         ? `<button class="small danger" style="padding:4px 8px;" onclick="eliminaAvanzamento(event,'${r.id}')">🗑</button>` : '';
-      // valore € (solo admin): quantità × prezzo della voce nel computo
+      // colonna € (solo admin): casella prezzo unitario editabile + totale calcolato
       let cellaEuro = '';
       if (window.isAdmin) {
-        const valore = Number(r.quantita || 0) * (prezzi[r.vocedesc] || 0);
+        // prezzo salvato sulla riga; se manca, provo dal computo
+        const prezzoRiga = (r.prezzoUnitario != null) ? Number(r.prezzoUnitario) : Number(prezzi[r.vocedesc] || 0);
+        const qta = Number(r.quantita || 0);
+        const valore = qta * prezzoRiga;
         totaleEuro += valore;
-        cellaEuro = `<td style="text-align:right; padding:10px;">€ ${valore.toFixed(2)}</td>`;
+        cellaEuro = `<td style="text-align:right; padding:10px; white-space:nowrap;">
+          <input type="number" step="0.01" value="${prezzoRiga || ''}" placeholder="prezzo"
+            onchange="salvaPrezzoAvanzamento('${r.id}', this.value)"
+            style="width:80px; padding:6px; border:1px solid #d1d5db; border-radius:6px; text-align:right;">
+          <span style="margin-left:6px;">= € <b id="tot_${r.id}">${valore.toFixed(2)}</b></span>
+        </td>`;
       }
       html += `<tr style="border-top:1px solid #eee;">
         <td style="padding:10px;">${dataIt}</td>
         <td style="padding:10px;">${escapeHtml(r.vocedesc || '?')}</td>
-        <td style="text-align:right; padding:10px;">${r.quantita || 0}</td>
+        <td style="text-align:right; padding:10px;" data-qta="${Number(r.quantita || 0)}">${r.quantita || 0}</td>
         <td style="padding:10px;">${escapeHtml(r.unita || '')}</td>
         <td style="padding:10px;">${tipoNome[r.tipo] || ''}</td>
         <td style="padding:10px;">${escapeHtml(r.note || '')}</td>
@@ -732,7 +805,7 @@ async function showAvanzamento() {
     // totale € solo admin
     if (window.isAdmin) {
       html += `<div class="card" style="background:#ecfdf5; border:1px solid #1d9e75;">
-        <b>Valore totale realizzato: € ${totaleEuro.toFixed(2)}</b></div>`;
+        <b>Valore totale realizzato: € <span id="totaleRealizzato">${totaleEuro.toFixed(2)}</span></b></div>`;
     }
 
     document.getElementById('view').innerHTML = html;
@@ -834,6 +907,32 @@ async function eliminaAvanzamento(event, id) {
   } catch (e) { toast('Errore: ' + e.message); }
 }
 
+// Salva il prezzo unitario sulla riga di avanzamento (solo admin) e aggiorna il totale
+async function salvaPrezzoAvanzamento(id, valore) {
+  if (!window.isAdmin) return;
+  const prezzo = parseFloat(valore) || 0;
+  try {
+    await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento', id), {
+      prezzoUnitario: prezzo
+    });
+    // ricalcolo il totale della riga e il totale generale senza ricaricare tutto
+    const rigaInput = document.querySelector(`#tot_${id}`);
+    if (rigaInput) {
+      const tr = rigaInput.closest('tr');
+      const qtaCell = tr.querySelector('[data-qta]');
+      const qta = qtaCell ? Number(qtaCell.getAttribute('data-qta')) : 0;
+      const valoreRiga = qta * prezzo;
+      rigaInput.textContent = valoreRiga.toFixed(2);
+      // ricalcolo il totale generale sommando tutti i totali di riga
+      let tot = 0;
+      document.querySelectorAll('[id^="tot_"]').forEach(el => { tot += Number(el.textContent) || 0; });
+      const totBox = document.getElementById('totaleRealizzato');
+      if (totBox) totBox.textContent = tot.toFixed(2);
+    }
+    toast('Prezzo salvato ✓');
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
 // Esporta l'avanzamento in Excel con intestazione arancione Gama (#f59014)
 async function esportaAvanzamentoExcel() {
   if (!window.ExcelJS) { toast('Libreria Excel non caricata, riprova'); return; }
@@ -884,19 +983,33 @@ async function esportaAvanzamentoExcel() {
         note: r.note || '',
         operaio: r.operaioEmail || ''
       };
-      if (window.isAdmin) riga.euro = Number((Number(r.quantita || 0) * (prezzi[r.vocedesc] || 0)).toFixed(2));
+      if (window.isAdmin) {
+        const prezzoRiga = (r.prezzoUnitario != null) ? Number(r.prezzoUnitario) : Number(prezzi[r.vocedesc] || 0);
+        riga.euro = Number((Number(r.quantita || 0) * prezzoRiga).toFixed(2));
+      }
       ws.addRow(riga);
     });
 
-    // stile intestazione: sfondo arancione Gama, testo bianco grassetto
+    // colori intestazione per nome colonna (come da file di Simone), testo nero
+    const coloriHeader = {
+      'Data': 'FFFF0000',            // rosso
+      'Voce di lavoro': 'FF92D050',  // verde chiaro
+      'Quantità': 'FFFFC000',        // arancione
+      'Unità': 'FFD9D9D9',           // grigio chiaro
+      'Tipo': 'FFFFFF00',            // giallo
+      'Note': 'FF00B0F0',            // azzurro
+      'Operaio': 'FF3333FF',         // blu
+      '€': 'FF00FF00'                // verde acceso
+    };
     const header = ws.getRow(1);
     header.eachCell((cell) => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF59014' } };
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      const colore = coloriHeader[cell.value] || 'FFF59014'; // fallback arancione Gama
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colore } };
+      cell.font = { bold: true, color: { argb: 'FF000000' } }; // testo nero
       cell.alignment = { vertical: 'middle', horizontal: 'left' };
       cell.border = {
-        top: { style: 'thin', color: { argb: 'FFD97F0A' } },
-        bottom: { style: 'thin', color: { argb: 'FFD97F0A' } }
+        top: { style: 'thin', color: { argb: 'FFBBBBBB' } },
+        bottom: { style: 'thin', color: { argb: 'FFBBBBBB' } }
       };
     });
     header.height = 20;
@@ -1719,6 +1832,7 @@ window.chiudiPdf = chiudiPdf;
 window.apriFormAvanzamento = apriFormAvanzamento;
 window.salvaAvanzamento = salvaAvanzamento;
 window.eliminaAvanzamento = eliminaAvanzamento;
+window.salvaPrezzoAvanzamento = salvaPrezzoAvanzamento;
 window.esportaAvanzamentoExcel = esportaAvanzamentoExcel;
 window.showRiepilogo = showRiepilogo;
 window.eliminaFattura = eliminaFattura;
