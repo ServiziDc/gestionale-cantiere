@@ -289,7 +289,7 @@ function updateBreadcrumb() {
       html += ` › <span>${escapeHtml(state.cantiereName)}</span>`;
     } else {
       html += ` › <a onclick="apriCantiere('${state.cantiereId}','${escapeAttr(state.cantiereName)}')">${escapeHtml(state.cantiereName)}</a>`;
-      const nomi = { computo: 'Computo metrico', avanzamento: 'Avanzamento', fatture: 'Fatture/Bolle', riepilogo: 'Riepilogo' };
+      const nomi = { computo: 'Computo metrico', avanzamento: 'Avanzamento', fatture: 'Fatture/Bolle', riepilogo: 'Riepilogo', archivio: 'Archivio mensile' };
       if (nomi[state.level]) html += ` › <span>${nomi[state.level]}</span>`;
     }
   }
@@ -384,6 +384,14 @@ function apriCantiere(id, nome) {
         </div>
         <div class="item-arrow">›</div>
       </div>
+      <div class="menu-card" onclick="showArchivio()">
+        <div class="menu-icon">🗂️</div>
+        <div class="menu-text">
+          <div class="menu-title">Archivio mensile</div>
+          <div class="menu-sub">Excel dei mesi passati</div>
+        </div>
+        <div class="item-arrow">›</div>
+      </div>
       ${window.isAdmin ? `
       <div class="menu-card" onclick="showRiepilogo()" style="border:1px solid #f59e0b;">
         <div class="menu-icon">📊</div>
@@ -409,16 +417,16 @@ async function showComputo() {
   document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento computo...</p></div>';
 
   try {
-    // pulsante per caricare il PDF del computo su Drive (operaio o admin del cantiere)
+    // pulsante per caricare il COMPUTO EXCEL: legge le voci + carica su Drive
     const barraPdf = puoModificare
-      ? `<input type="file" id="computoPdfInput" accept="application/pdf" style="display:none;" onchange="caricaComputoPdf(this)">
-         <button class="secondary" style="margin-bottom:12px;" onclick="document.getElementById('computoPdfInput').click()">📎 Carica computo PDF su Drive</button>`
+      ? `<input type="file" id="computoExcelInput" accept=".xlsx,.xls" style="display:none;" onchange="caricaComputoExcel(this)">
+         <button class="secondary" style="margin-bottom:12px;" onclick="document.getElementById('computoExcelInput').click()">📊 Carica computo Excel</button>`
       : '';
 
     const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
     let voci = [];
     snap.forEach(d => voci.push({ id: d.id, ...d.data() }));
-    voci.sort((a, b) => (a.descrizione || '').localeCompare(b.descrizione || ''));
+    voci.sort((a, b) => (a.ordine ?? 9999) - (b.ordine ?? 9999) || (a.descrizione || '').localeCompare(b.descrizione || ''));
 
     if (voci.length === 0) {
       const hint = puoModificare ? '<br>Premi + per aggiungere una voce.' : '';
@@ -691,52 +699,97 @@ async function eliminaVoce(event, id, desc) {
 }
 
 // Carica il PDF del computo sul Drive aziendale tramite la Cloud Function
-async function caricaComputoPdf(input) {
+// Carica il COMPUTO EXCEL: legge le voci e le importa nel cantiere + carica il file su Drive
+async function caricaComputoExcel(input) {
   const file = input.files && input.files[0];
   if (!file) return;
-  if (file.type !== 'application/pdf') { toast('Seleziona un file PDF'); input.value = ''; return; }
-  if (file.size > 8 * 1024 * 1024) { toast('PDF troppo grande (max 8 MB)'); input.value = ''; return; }
+  const nomeLower = file.name.toLowerCase();
+  if (!nomeLower.endsWith('.xlsx') && !nomeLower.endsWith('.xls')) {
+    toast('Seleziona un file Excel (.xlsx)'); input.value = ''; return;
+  }
+  if (file.size > 8 * 1024 * 1024) { toast('File troppo grande (max 8 MB)'); input.value = ''; return; }
+  if (!window.XLSX) { toast('Libreria Excel non caricata, riprova'); input.value = ''; return; }
 
-  toast('Caricamento su Drive in corso...');
+  toast('Lettura computo Excel...');
   try {
-    // converto il PDF in base64
-    const base64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result.split(',')[1]);
-      r.onerror = () => rej(new Error('Lettura file fallita'));
-      r.readAsDataURL(file);
-    });
+    // leggo il file come array di byte
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    // converto in righe (array di array), mantengo le celle vuote
+    const righe = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, blankrows: false });
 
+    // estraggo le voci: le voci iniziano dalla riga 10 (indice 9)
+    // colonne (0-based): D=3 descrizione, E=4 unità, F=5 quantità prevista
+    const voci = [];
+    let ordine = 0;
+    for (let i = 9; i < righe.length; i++) {
+      const r = righe[i] || [];
+      const descrizione = (r[3] != null) ? String(r[3]).trim() : '';
+      const unita = (r[4] != null) ? String(r[4]).trim() : '';
+      const quantitaPrev = (r[5] != null) ? r[5] : '';
+      // tengo la riga solo se ha una descrizione (importo tutto ciò che ha testo)
+      if (descrizione) {
+        voci.push({ descrizione, unita, quantitaPrev: (quantitaPrev === null ? '' : quantitaPrev), ordine: ordine++ });
+      }
+    }
+
+    if (voci.length === 0) {
+      toast('Nessuna voce trovata nel file'); input.value = ''; return;
+    }
+
+    if (!confirm(`Trovate ${voci.length} voci nel computo.\nVuoi importarle nel cantiere? (sostituisce il computo attuale)`)) {
+      input.value = ''; return;
+    }
+
+    toast('Importazione voci...');
+    // cancello le voci esistenti del computo
+    const esistenti = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    for (const d of esistenti.docs) {
+      await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', d.id));
+    }
+    // salvo le nuove voci
+    for (const v of voci) {
+      await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'), {
+        descrizione: v.descrizione,
+        unita: v.unita,
+        quantitaPrev: v.quantitaPrev,
+        ordine: v.ordine,
+        prezzo: 0,
+        creato: fb.serverTimestamp()
+      });
+    }
+
+    // carico il file Excel su Drive
+    toast('Caricamento Excel su Drive...');
+    const base64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result.split(',')[1]);
+      reader.onerror = () => rej(new Error('Lettura file fallita'));
+      reader.readAsDataURL(file);
+    });
     const oggi = new Date().toISOString().split('T')[0];
     const fileName = `${oggi}_${file.name}`;
-
-    // token Firebase dell'utente loggato, per autenticare la chiamata
     const token = await window.currentUser.getIdToken();
-
     const URL_FUNZIONE = 'https://europe-west1-gama-service.cloudfunctions.net/caricaComputoSuDrive';
     const resp = await fetch(URL_FUNZIONE, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
       body: JSON.stringify({
-        fileBase64: base64,
-        fileName: fileName,
-        cantiereNome: state.cantiereName || '',
-        cantiereId: state.cantiereId || ''
+        fileBase64: base64, fileName: fileName,
+        cantiereNome: state.cantiereName || '', cantiereId: state.cantiereId || ''
       })
     });
-
     const data = await resp.json();
     if (resp.ok && data.ok) {
-      toast('Computo caricato su Drive ✓');
+      toast(`Computo importato (${voci.length} voci) e salvato su Drive ✓`);
     } else {
-      toast('Errore Drive: ' + (data.error || 'riprova'));
+      toast(`Voci importate (${voci.length}). Drive: ${data.error || 'errore caricamento file'}`);
     }
+    showComputo();
   } catch (e) {
     console.error(e);
-    toast('Errore Drive: ' + (e.message || 'riprova'));
+    toast('Errore: ' + (e.message || 'riprova'));
   } finally {
     input.value = '';
   }
@@ -744,90 +797,74 @@ async function caricaComputoPdf(input) {
 
 // ============ TAPPA 3 — AVANZAMENTO GIORNALIERO ============
 // Sottocollezione: gc_cantieri/{id}/avanzamento
-//   { vocedesc, quantita, tipo (normale/extra/variante), data, note, operaioEmail, creato }
+//   L'avanzamento ora si basa sulle voci del computo (campo quantitaFatta), non più su una collezione separata
 async function showAvanzamento() {
   state.level = 'avanzamento';
   updateBreadcrumb();
-  document.getElementById('fab').style.display = 'flex';
-  window.fabContext = 'avanzamento';
+  document.getElementById('fab').style.display = 'none'; // niente più +, si compila la tabella
   document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento avanzamento...</p></div>';
 
   try {
-    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
-    let righe = [];
-    snap.forEach(d => righe.push({ id: d.id, ...d.data() }));
-    // ordino per data decrescente (più recenti in cima)
-    righe.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+    // leggo le voci del computo (sono la base dell'avanzamento)
+    const cSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    let voci = [];
+    cSnap.forEach(d => voci.push({ id: d.id, ...d.data() }));
+    voci.sort((a, b) => (a.ordine ?? 9999) - (b.ordine ?? 9999) || (a.descrizione || '').localeCompare(b.descrizione || ''));
 
-    if (righe.length === 0) {
+    if (voci.length === 0) {
       document.getElementById('view').innerHTML =
-        `<div class="empty"><div class="empty-icon">📈</div><p>Nessun avanzamento registrato.<br>Premi + per aggiungerne uno.</p></div>`;
+        `<div class="empty"><div class="empty-icon">📈</div><p>Nessuna voce nel computo.<br>Carica prima il computo Excel nella sezione Computo metrico.</p></div>`;
       return;
     }
 
-    // per l'admin: carico i prezzi dal computo per calcolare il valore €
-    let prezzi = {};
-    if (window.isAdmin) {
-      try {
-        const cSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
-        cSnap.forEach(d => { const v = d.data(); prezzi[v.descrizione] = Number(v.prezzo || 0); });
-      } catch (e) {}
-    }
+    const puoModificare = await verificaProprietaCantiere();
 
-    const tipoNome = { normale: 'Normale', extra: 'Extra', variante: 'Variante' };
     let html = `<button class="secondary" style="margin-bottom:12px;" onclick="esportaAvanzamentoExcel()">📥 Scarica Excel</button>`;
-
-    // intestazione tabella (colonna € e Operaio solo per admin)
-    let totaleEuro = 0;
     html += `<div class="card" style="padding:0; overflow-x:auto;">
-      <table style="width:100%; border-collapse:collapse; font-size:13px; white-space:nowrap;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
         <thead><tr style="background:#f3f4f6;">
-          <th style="text-align:left; padding:10px;">Data</th>
-          <th style="text-align:left; padding:10px;">Voce</th>
-          <th style="text-align:right; padding:10px;">Q.tà</th>
+          <th style="text-align:left; padding:10px; min-width:200px;">Voce di lavoro</th>
           <th style="text-align:left; padding:10px;">Unità</th>
-          <th style="text-align:left; padding:10px;">Tipo</th>
-          <th style="text-align:left; padding:10px;">Note</th>
-          ${window.isAdmin ? '<th style="text-align:left; padding:10px;">Operaio</th>' : ''}
-          ${window.isAdmin ? '<th style="text-align:right; padding:10px;">€</th>' : ''}
-          <th style="padding:10px;"></th>
+          <th style="text-align:right; padding:10px;">Prev.</th>
+          <th style="text-align:right; padding:10px;">Q.tà fatta</th>
+          ${window.isAdmin ? '<th style="text-align:right; padding:10px;">Prezzo</th>' : ''}
+          ${window.isAdmin ? '<th style="text-align:right; padding:10px;">Totale</th>' : ''}
         </tr></thead><tbody>`;
 
-    righe.forEach(r => {
-      const dataIt = r.data ? r.data.split('-').reverse().join('/') : '';
-      const puoGestire = window.isAdmin || r.operaioUid === window.currentUser.uid;
-      const btn = puoGestire
-        ? `<button class="small danger" style="padding:4px 8px;" onclick="eliminaAvanzamento(event,'${r.id}')">🗑</button>` : '';
-      // colonna € (solo admin): casella prezzo unitario editabile + totale calcolato
-      let cellaEuro = '';
+    let totaleEuro = 0;
+    voci.forEach(v => {
+      const qtaFatta = (v.quantitaFatta != null) ? v.quantitaFatta : '';
+      // casella quantità fatta: editabile se l'utente può modificare il cantiere
+      const cellaFatta = puoModificare
+        ? `<input type="number" step="0.01" value="${qtaFatta}" placeholder="0"
+             onchange="salvaQuantitaFatta('${v.id}', this.value)"
+             style="width:90px; padding:6px; border:1px solid #d1d5db; border-radius:6px; text-align:right;">`
+        : `<b>${qtaFatta || 0}</b>`;
+
+      let cellePrezzo = '';
       if (window.isAdmin) {
-        // prezzo salvato sulla riga; se manca, provo dal computo
-        const prezzoRiga = (r.prezzoUnitario != null) ? Number(r.prezzoUnitario) : Number(prezzi[r.vocedesc] || 0);
-        const qta = Number(r.quantita || 0);
-        const valore = qta * prezzoRiga;
+        const prezzo = Number(v.prezzo || 0);
+        const valore = Number(qtaFatta || 0) * prezzo;
         totaleEuro += valore;
-        cellaEuro = `<td style="text-align:right; padding:10px; white-space:nowrap;">
-          <input type="number" step="0.01" value="${prezzoRiga || ''}" placeholder="prezzo"
-            onchange="salvaPrezzoAvanzamento('${r.id}', this.value)"
-            style="width:80px; padding:6px; border:1px solid #d1d5db; border-radius:6px; text-align:right;">
-          <span style="margin-left:6px;">= € <b id="tot_${r.id}">${valore.toFixed(2)}</b></span>
-        </td>`;
+        cellePrezzo = `
+          <td style="text-align:right; padding:10px;">
+            <input type="number" step="0.01" value="${prezzo || ''}" placeholder="prezzo"
+              onchange="salvaPrezzoVoce('${v.id}', this.value)"
+              style="width:80px; padding:6px; border:1px solid #d1d5db; border-radius:6px; text-align:right;">
+          </td>
+          <td style="text-align:right; padding:10px;">€ <b id="totv_${v.id}">${valore.toFixed(2)}</b></td>`;
       }
+
       html += `<tr style="border-top:1px solid #eee;">
-        <td style="padding:10px;">${dataIt}</td>
-        <td style="padding:10px;">${escapeHtml(r.vocedesc || '?')}</td>
-        <td style="text-align:right; padding:10px;" data-qta="${Number(r.quantita || 0)}">${r.quantita || 0}</td>
-        <td style="padding:10px;">${escapeHtml(r.unita || '')}</td>
-        <td style="padding:10px;">${tipoNome[r.tipo] || ''}</td>
-        <td style="padding:10px;">${escapeHtml(r.note || '')}</td>
-        ${window.isAdmin ? `<td style="padding:10px;">${escapeHtml(r.operaioEmail || '')}</td>` : ''}
-        ${cellaEuro}
-        <td style="padding:10px;">${btn}</td>
+        <td style="padding:10px;">${escapeHtml(v.descrizione || '?')}</td>
+        <td style="padding:10px;">${escapeHtml(v.unita || '')}</td>
+        <td style="text-align:right; padding:10px;">${v.quantitaPrev != null ? escapeHtml(String(v.quantitaPrev)) : ''}</td>
+        <td style="text-align:right; padding:10px;" data-prezzo="${Number(v.prezzo || 0)}">${cellaFatta}</td>
+        ${cellePrezzo}
       </tr>`;
     });
     html += `</tbody></table></div>`;
 
-    // totale € solo admin
     if (window.isAdmin) {
       html += `<div class="card" style="background:#ecfdf5; border:1px solid #1d9e75;">
         <b>Valore totale realizzato: € <span id="totaleRealizzato">${totaleEuro.toFixed(2)}</span></b></div>`;
@@ -839,160 +876,81 @@ async function showAvanzamento() {
   }
 }
 
-async function apriFormAvanzamento() {
-  openModal(`<h2>➕ Avanzamento</h2><p style="color:#6b7280;font-size:13px;">Caricamento voci...</p>`);
-  // carico le voci del computo per la tendina
-  let voci = [];
+// Salva la quantità realizzata sulla voce del computo
+async function salvaQuantitaFatta(voceId, valore) {
+  const qta = parseFloat(valore) || 0;
   try {
-    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
-    snap.forEach(d => voci.push({ id: d.id, ...d.data() }));
-  } catch (e) {}
-  voci.sort((a, b) => (a.descrizione || '').localeCompare(b.descrizione || ''));
-
-  const oggi = new Date().toISOString().split('T')[0];
-  const opzioniVoci = voci.length
-    ? voci.map(v => `<option value="${escapeAttr(v.descrizione)}">${escapeHtml(v.descrizione)} (${v.unita || ''})</option>`).join('')
-    : '<option value="">— nessuna voce nel computo —</option>';
-
-  openModal(`<h2>➕ Avanzamento giornaliero</h2>
-    <label class="field-label">Voce di lavoro</label>
-    <select id="aVoce" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;margin-bottom:10px;">
-      ${opzioniVoci}
-      <option value="__altro__">➕ Altro (scrivo io)</option>
-    </select>
-    <input type="text" id="aVoceAltro" placeholder="Descrizione lavoro" style="display:none;">
-    <label class="field-label">Data</label>
-    <input type="date" id="aData" value="${oggi}">
-    <label class="field-label">Quantità realizzata</label>
-    <div style="display:flex; gap:8px;">
-      <input type="number" id="aQta" step="0.01" placeholder="0" style="flex:2;">
-      <select id="aUnita" style="flex:1; padding:12px; border:1px solid #d1d5db; border-radius:8px; font-size:15px; margin-bottom:10px;">
-        <option value="mt">mt</option>
-        <option value="cm">cm</option>
-        <option value="mq">mq</option>
-        <option value="mc">mc</option>
-        <option value="kg">kg</option>
-        <option value="gr">gr</option>
-        <option value="nr">nr</option>
-        <option value="lt">lt</option>
-        <option value="ore">ore</option>
-      </select>
-    </div>
-    <label class="field-label">Tipo</label>
-    <select id="aTipo" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;margin-bottom:10px;">
-      <option value="normale">Lavoro normale (da computo)</option>
-      <option value="extra">Lavoro extra</option>
-      <option value="variante">Variante opera extra</option>
-    </select>
-    <label class="field-label">Note (opzionale)</label>
-    <input type="text" id="aNote" placeholder="Eventuali note">
-    <button class="success" onclick="salvaAvanzamento()">Registra</button>
-    <button class="secondary" style="margin-top:8px;" onclick="closeModal()">Annulla</button>`);
-
-  // se sceglie "Altro" mostro il campo libero
-  document.getElementById('aVoce').addEventListener('change', function() {
-    document.getElementById('aVoceAltro').style.display = this.value === '__altro__' ? 'block' : 'none';
-  });
-}
-
-async function salvaAvanzamento() {
-  const sel = document.getElementById('aVoce').value;
-  const vocedesc = sel === '__altro__'
-    ? document.getElementById('aVoceAltro').value.trim()
-    : sel;
-  const data = document.getElementById('aData').value;
-  const quantita = parseFloat(document.getElementById('aQta').value) || 0;
-  const unita = document.getElementById('aUnita').value;
-  const tipo = document.getElementById('aTipo').value;
-  const note = document.getElementById('aNote').value.trim();
-
-  if (!vocedesc) { toast('Scegli o scrivi una voce'); return; }
-  if (!data) { toast('Inserisci la data'); return; }
-
-  try {
-    await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'), {
-      vocedesc, data, quantita, unita, tipo, note,
-      operaioUid: window.currentUser.uid,
-      operaioEmail: window.currentUser.email,
-      creato: fb.serverTimestamp()
+    await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', voceId), {
+      quantitaFatta: qta
     });
-    closeModal();
-    toast('Avanzamento registrato ✓');
-    showAvanzamento();
+    // aggiorno il totale della riga (se admin) e il totale generale
+    if (window.isAdmin) {
+      const tr = document.querySelector(`#totv_${voceId}`)?.closest('tr');
+      if (tr) {
+        const prezzoCell = tr.querySelector('[data-prezzo]');
+        const prezzo = prezzoCell ? Number(prezzoCell.getAttribute('data-prezzo')) : 0;
+        const valoreRiga = qta * prezzo;
+        document.getElementById(`totv_${voceId}`).textContent = valoreRiga.toFixed(2);
+        ricalcolaTotaleAvanzamento();
+      }
+    }
+    toast('Salvato ✓');
   } catch (e) { toast('Errore: ' + e.message); }
 }
 
-async function eliminaAvanzamento(event, id) {
-  event.stopPropagation();
-  if (!confirm('Eliminare questa registrazione?')) return;
-  try {
-    await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento', id));
-    toast('Eliminato ✓');
-    showAvanzamento();
-  } catch (e) { toast('Errore: ' + e.message); }
-}
-
-// Salva il prezzo unitario sulla riga di avanzamento (solo admin) e aggiorna il totale
-async function salvaPrezzoAvanzamento(id, valore) {
+// Salva il prezzo unitario sulla voce del computo (solo admin)
+async function salvaPrezzoVoce(voceId, valore) {
   if (!window.isAdmin) return;
   const prezzo = parseFloat(valore) || 0;
   try {
-    await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento', id), {
-      prezzoUnitario: prezzo
+    await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', voceId), {
+      prezzo: prezzo
     });
-    // ricalcolo il totale della riga e il totale generale senza ricaricare tutto
-    const rigaInput = document.querySelector(`#tot_${id}`);
-    if (rigaInput) {
-      const tr = rigaInput.closest('tr');
-      const qtaCell = tr.querySelector('[data-qta]');
-      const qta = qtaCell ? Number(qtaCell.getAttribute('data-qta')) : 0;
-      const valoreRiga = qta * prezzo;
-      rigaInput.textContent = valoreRiga.toFixed(2);
-      // ricalcolo il totale generale sommando tutti i totali di riga
-      let tot = 0;
-      document.querySelectorAll('[id^="tot_"]').forEach(el => { tot += Number(el.textContent) || 0; });
-      const totBox = document.getElementById('totaleRealizzato');
-      if (totBox) totBox.textContent = tot.toFixed(2);
+    // aggiorno il data-prezzo e ricalcolo
+    const tr = document.querySelector(`#totv_${voceId}`)?.closest('tr');
+    if (tr) {
+      const prezzoCell = tr.querySelector('[data-prezzo]');
+      if (prezzoCell) prezzoCell.setAttribute('data-prezzo', prezzo);
+      const fattaInput = prezzoCell ? prezzoCell.querySelector('input') : null;
+      const qta = fattaInput ? Number(fattaInput.value) || 0 : 0;
+      document.getElementById(`totv_${voceId}`).textContent = (qta * prezzo).toFixed(2);
+      ricalcolaTotaleAvanzamento();
     }
     toast('Prezzo salvato ✓');
   } catch (e) { toast('Errore: ' + e.message); }
 }
+
+function ricalcolaTotaleAvanzamento() {
+  let tot = 0;
+  document.querySelectorAll('[id^="totv_"]').forEach(el => { tot += Number(el.textContent) || 0; });
+  const box = document.getElementById('totaleRealizzato');
+  if (box) box.textContent = tot.toFixed(2);
+}
+
+// (vecchie funzioni avanzamento rimosse: ora si compila la tabella delle voci del computo)
 
 // Esporta l'avanzamento in Excel con intestazione arancione Gama (#f59014)
 async function esportaAvanzamentoExcel() {
   if (!window.ExcelJS) { toast('Libreria Excel non caricata, riprova'); return; }
   toast('Genero Excel...');
   try {
-    const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
-    let righe = [];
-    snap.forEach(d => righe.push(d.data()));
-    righe.sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+    // leggo le voci del computo (con quantità prevista, fatta e prezzo)
+    const cSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    let voci = [];
+    cSnap.forEach(d => voci.push({ id: d.id, ...d.data() }));
+    voci.sort((a, b) => (a.ordine ?? 9999) - (b.ordine ?? 9999) || (a.descrizione || '').localeCompare(b.descrizione || ''));
 
-    if (righe.length === 0) { toast('Nessun avanzamento da esportare'); return; }
-
-    // per l'admin: prezzi dal computo per la colonna €
-    let prezzi = {};
-    if (window.isAdmin) {
-      try {
-        const cSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
-        cSnap.forEach(d => { const v = d.data(); prezzi[v.descrizione] = Number(v.prezzo || 0); });
-      } catch (e) {}
-    }
-
-    const tipoNome = { normale: 'Normale', extra: 'Extra', variante: 'Variante' };
+    if (voci.length === 0) { toast('Nessuna voce da esportare'); return; }
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Avanzamento');
 
     // colonne (Prezzo unit. e Totale solo per admin)
     const colonne = [
-      { header: 'Data', key: 'data', width: 14 },
-      { header: 'Voce di lavoro', key: 'voce', width: 34 },
-      { header: 'Quantità', key: 'qta', width: 12 },
+      { header: 'Voce di lavoro', key: 'voce', width: 50 },
       { header: 'Unità', key: 'unita', width: 10 },
-      { header: 'Tipo', key: 'tipo', width: 12 },
-      { header: 'Note', key: 'note', width: 30 },
-      { header: 'Operaio', key: 'operaio', width: 28 }
+      { header: 'Q.tà prevista', key: 'prev', width: 14 },
+      { header: 'Q.tà fatta', key: 'fatta', width: 14 }
     ];
     if (window.isAdmin) {
       colonne.push({ header: 'Prezzo unit.', key: 'prezzo', width: 14 });
@@ -1001,55 +959,47 @@ async function esportaAvanzamentoExcel() {
     ws.columns = colonne;
 
     // righe dati
-    // con admin: C=Quantità, H=Prezzo unit., I=Totale  → formula I = C*H
+    // con admin: D=Q.tà fatta (col 4), E=Prezzo (col 5), F=Totale (col 6) → formula F = D*E
     let rowIndex = 1; // riga 1 = intestazione
-    righe.forEach(r => {
+    voci.forEach(v => {
       rowIndex++;
       const riga = {
-        data: r.data ? r.data.split('-').reverse().join('/') : '',
-        voce: r.vocedesc || '',
-        qta: Number(r.quantita || 0),
-        unita: r.unita || '',
-        tipo: tipoNome[r.tipo] || r.tipo || '',
-        note: r.note || '',
-        operaio: r.operaioEmail || ''
+        voce: v.descrizione || '',
+        unita: v.unita || '',
+        prev: (v.quantitaPrev != null ? v.quantitaPrev : ''),
+        fatta: Number(v.quantitaFatta || 0)
       };
       if (window.isAdmin) {
-        const prezzoRiga = (r.prezzoUnitario != null) ? Number(r.prezzoUnitario) : Number(prezzi[r.vocedesc] || 0);
-        riga.prezzo = prezzoRiga;
-        // formula vera: Totale = Quantità (col C) × Prezzo unit. (col H)
-        riga.totale = { formula: `C${rowIndex}*H${rowIndex}` };
+        riga.prezzo = Number(v.prezzo || 0);
+        // formula vera: Totale = Q.tà fatta (col D) × Prezzo (col E)
+        riga.totale = { formula: `D${rowIndex}*E${rowIndex}` };
       }
       ws.addRow(riga);
     });
 
-    // riga somma finale (solo admin): SOMMA della colonna Totale
-    if (window.isAdmin && righe.length > 0) {
-      const rigaSomma = ws.addRow({ note: 'TOTALE COMPLESSIVO' });
-      const colTotale = 'I'; // colonna Totale
-      const cellaSomma = rigaSomma.getCell(9); // I = 9
-      cellaSomma.value = { formula: `SUM(${colTotale}2:${colTotale}${rowIndex})` };
+    // riga somma finale (solo admin): SOMMA della colonna Totale (F)
+    if (window.isAdmin && voci.length > 0) {
+      const rigaSomma = ws.addRow({ prev: 'TOTALE COMPLESSIVO' });
+      const cellaSomma = rigaSomma.getCell(6); // F = 6
+      cellaSomma.value = { formula: `SUM(F2:F${rowIndex})` };
       cellaSomma.font = { bold: true };
-      rigaSomma.getCell(6).font = { bold: true }; // "TOTALE COMPLESSIVO" in grassetto (col F=6)
+      rigaSomma.getCell(3).font = { bold: true }; // "TOTALE COMPLESSIVO" (col C=3)
     }
 
-    // colori intestazione per nome colonna (come da file di Simone), testo nero
+    // colori intestazione per nome colonna, testo nero
     const coloriHeader = {
-      'Data': 'FFFF0000',            // rosso
       'Voce di lavoro': 'FF92D050',  // verde chiaro
-      'Quantità': 'FFFFC000',        // arancione
       'Unità': 'FFD9D9D9',           // grigio chiaro
-      'Tipo': 'FFFFFF00',            // giallo
-      'Note': 'FF00B0F0',            // azzurro
-      'Operaio': 'FF3333FF',         // blu
+      'Q.tà prevista': 'FFFFC000',   // arancione
+      'Q.tà fatta': 'FF00B0F0',      // azzurro
       'Prezzo unit.': 'FF00FF00',    // verde acceso
       'Totale': 'FF00B050'           // verde scuro
     };
     const header = ws.getRow(1);
     header.eachCell((cell) => {
-      const colore = coloriHeader[cell.value] || 'FFF59014'; // fallback arancione Gama
+      const colore = coloriHeader[cell.value] || 'FFF59014';
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colore } };
-      cell.font = { bold: true, color: { argb: 'FF000000' } }; // testo nero
+      cell.font = { bold: true, color: { argb: 'FF000000' } };
       cell.alignment = { vertical: 'middle', horizontal: 'left' };
       cell.border = {
         top: { style: 'thin', color: { argb: 'FFBBBBBB' } },
@@ -1058,11 +1008,13 @@ async function esportaAvanzamentoExcel() {
     });
     header.height = 20;
 
-    // bordo leggero alle righe dati
-    for (let i = 2; i <= righe.length + 1; i++) {
-      ws.getRow(i).eachCell((cell) => {
+    // bordo leggero + testo a capo sulla descrizione lunga
+    for (let i = 2; i <= voci.length + 1; i++) {
+      const row = ws.getRow(i);
+      row.eachCell((cell) => {
         cell.border = { bottom: { style: 'hair', color: { argb: 'FFDDDDDD' } } };
       });
+      row.getCell(1).alignment = { wrapText: true, vertical: 'top' };
     }
 
     // genera e scarica
@@ -1081,6 +1033,77 @@ async function esportaAvanzamentoExcel() {
   } catch (e) { toast('Errore export: ' + e.message); }
 }
 
+// ============ ARCHIVIO MENSILE (operaio + admin) ============
+async function showArchivio() {
+  state.level = 'archivio';
+  updateBreadcrumb();
+  document.getElementById('fab').style.display = 'none';
+  document.getElementById('view').innerHTML = '<div class="card"><p>Caricamento archivio...</p></div>';
+
+  try {
+    const token = await window.currentUser.getIdToken();
+    const URL_ARCH = 'https://europe-west1-gama-service.cloudfunctions.net/elencaArchivio'
+      + '?cantiere=' + encodeURIComponent(state.cantiereName || '')
+      + '&cantiereId=' + encodeURIComponent(state.cantiereId || '');
+    const resp = await fetch(URL_ARCH, { method: 'GET', headers: { 'Authorization': 'Bearer ' + token } });
+    const data = await resp.json();
+
+    if (!resp.ok || !data.ok) {
+      document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${(data && data.error) || 'caricamento archivio'}</div>`;
+      return;
+    }
+    if (!data.files || data.files.length === 0) {
+      document.getElementById('view').innerHTML =
+        `<div class="empty"><div class="empty-icon">🗂️</div><p>Nessun archivio ancora.<br>Gli Excel vengono archiviati automaticamente il 1° di ogni mese.</p></div>`;
+      return;
+    }
+
+    // raggruppo per mese
+    const perMese = {};
+    data.files.forEach(f => { (perMese[f.mese] = perMese[f.mese] || []).push(f); });
+    const mesi = Object.keys(perMese).sort().reverse();
+
+    let html = `<div style="margin-bottom:10px; color:#6b7280; font-size:13px;">Excel archiviati automaticamente a fine mese.</div>`;
+    mesi.forEach(mese => {
+      html += `<div style="margin:14px 0 6px; font-weight:600;">📅 ${mese}</div>`;
+      perMese[mese].forEach(f => {
+        html += `<div class="item">
+          <div class="item-info"><div class="item-title">📊 ${escapeHtml(f.name)}</div></div>
+          <button class="small" style="background:#16a34a;" onclick="scaricaFileArchivio('${f.id}','${escapeAttr(f.name)}')">Scarica</button>
+        </div>`;
+      });
+    });
+    document.getElementById('view').innerHTML = html;
+  } catch (e) {
+    document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
+  }
+}
+
+// Scarica un Excel archiviato (riusa scaricaComputo, che scarica per id)
+async function scaricaFileArchivio(fileId, nome) {
+  toast('Scaricamento...');
+  try {
+    const token = await window.currentUser.getIdToken();
+    const URL_SCARICA = 'https://europe-west1-gama-service.cloudfunctions.net/scaricaComputo'
+      + '?fileId=' + encodeURIComponent(fileId)
+      + '&cantiereId=' + encodeURIComponent(state.cantiereId || '');
+    const resp = await fetch(URL_SCARICA, { method: 'GET', headers: { 'Authorization': 'Bearer ' + token } });
+    const data = await resp.json();
+    if (!data.ok || !data.base64) { throw new Error(data.error || 'file non disponibile'); }
+    // converto base64 in file e scarico
+    const bytes = Uint8Array.from(atob(data.base64), c => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    toast('Scaricato ✓');
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
 // ============ TAPPA 4 — RIEPILOGO (solo admin) ============
 // Incrocia computo (previsto + prezzo) con avanzamento (realizzato)
 async function showRiepilogo() {
@@ -1091,43 +1114,35 @@ async function showRiepilogo() {
   document.getElementById('view').innerHTML = '<div class="card"><p>Calcolo riepilogo...</p></div>';
 
   try {
-    // carico computo
+    // carico le voci del computo: contengono previsto, prezzo E quantità fatta
     const cSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
-    const computo = {};
-    cSnap.forEach(d => { const v = d.data(); computo[v.descrizione] = { prev: Number(v.quantitaPrev||0), prezzo: Number(v.prezzo||0), unita: v.unita||'' }; });
+    let voci = [];
+    cSnap.forEach(d => voci.push({ id: d.id, ...d.data() }));
+    voci.sort((a, b) => (a.ordine ?? 9999) - (b.ordine ?? 9999) || (a.descrizione || '').localeCompare(b.descrizione || ''));
 
-    // carico avanzamento e sommo le quantità per voce
-    const aSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'avanzamento'));
-    const realizzato = {}; let extraTot = 0, extraVal = 0;
-    aSnap.forEach(d => {
-      const r = d.data();
-      const q = Number(r.quantita||0);
-      if (!realizzato[r.vocedesc]) realizzato[r.vocedesc] = { q: 0, tipo: r.tipo };
-      realizzato[r.vocedesc].q += q;
-    });
-
-    // costruisco la tabella riepilogo
-    let valorePrevisto = 0, valoreRealizzato = 0;
-    let rows = '';
-    const tutteVoci = new Set([...Object.keys(computo), ...Object.keys(realizzato)]);
-    if (tutteVoci.size === 0) {
-      document.getElementById('view').innerHTML = `<div class="empty"><div class="empty-icon">📊</div><p>Niente da riepilogare.</p></div>`;
+    if (voci.length === 0) {
+      document.getElementById('view').innerHTML = `<div class="empty"><div class="empty-icon">📊</div><p>Niente da riepilogare.<br>Carica prima il computo Excel.</p></div>`;
       return;
     }
-    [...tutteVoci].sort().forEach(desc => {
-      const c = computo[desc] || { prev: 0, prezzo: 0, unita: '' };
-      const real = (realizzato[desc] || { q: 0 }).q;
-      const vPrev = c.prev * c.prezzo;
-      const vReal = real * c.prezzo;
+
+    // costruisco la tabella riepilogo: previsto vs realizzato per ogni voce
+    let valorePrevisto = 0, valoreRealizzato = 0;
+    let rows = '';
+    voci.forEach(v => {
+      const prev = Number(v.quantitaPrev || 0); // se "a corpo" diventa 0
+      const real = Number(v.quantitaFatta || 0);
+      const prezzo = Number(v.prezzo || 0);
+      const vPrev = prev * prezzo;
+      const vReal = real * prezzo;
       valorePrevisto += vPrev; valoreRealizzato += vReal;
-      const perc = c.prev > 0 ? Math.round(real / c.prev * 100) : (real > 0 ? 100 : 0);
-      const fuoriComputo = !computo[desc];
+      const perc = prev > 0 ? Math.round(real / prev * 100) : (real > 0 ? 100 : 0);
+      const prevMostra = (v.quantitaPrev != null && v.quantitaPrev !== '') ? v.quantitaPrev : '—';
       rows += `<tr>
-        <td>${escapeHtml(desc)}${fuoriComputo ? ' <span style="color:#d97706;">extra</span>' : ''}</td>
-        <td style="text-align:right;">${c.prev} ${escapeHtml(c.unita)}</td>
-        <td style="text-align:right;">${real}</td>
-        <td style="text-align:right;">${perc}%</td>
-        <td style="text-align:right;">€ ${vReal.toFixed(2)}</td>
+        <td style="padding:8px;">${escapeHtml(v.descrizione || '?')}</td>
+        <td style="text-align:right; padding:8px;">${escapeHtml(String(prevMostra))} ${escapeHtml(v.unita || '')}</td>
+        <td style="text-align:right; padding:8px;">${real}</td>
+        <td style="text-align:right; padding:8px;">${perc}%</td>
+        <td style="text-align:right; padding:8px;">€ ${vReal.toFixed(2)}</td>
       </tr>`;
     });
 
@@ -1251,7 +1266,7 @@ async function scaricaFattureZip() {
 async function fabAction() {
   // il + crea cose diverse a seconda di dove sei
   if (state.level === 'computo') { apriFormVoce(null); return; }
-  if (state.level === 'avanzamento') { apriFormAvanzamento(); return; }
+  // avanzamento: niente +, si compila direttamente la tabella delle voci
   if (state.level === 'fatture') { openPhotoModal(); return; }
   // default: nuovo cantiere (sia admin che operai)
   apriFormCantiere(null);
@@ -1869,17 +1884,18 @@ window.apriFormVoce = apriFormVoce;
 window.salvaVoce = salvaVoce;
 window.editVoce = editVoce;
 window.eliminaVoce = eliminaVoce;
-window.caricaComputoPdf = caricaComputoPdf;
+window.caricaComputoExcel = caricaComputoExcel;
 window.caricaListaComputiPdf = caricaListaComputiPdf;
 window.eliminaComputoPdf = eliminaComputoPdf;
 window.visualizzaPdf = visualizzaPdf;
 window.chiudiPdf = chiudiPdf;
-window.apriFormAvanzamento = apriFormAvanzamento;
-window.salvaAvanzamento = salvaAvanzamento;
-window.eliminaAvanzamento = eliminaAvanzamento;
-window.salvaPrezzoAvanzamento = salvaPrezzoAvanzamento;
+window.salvaQuantitaFatta = salvaQuantitaFatta;
+window.salvaPrezzoVoce = salvaPrezzoVoce;
+window.ricalcolaTotaleAvanzamento = ricalcolaTotaleAvanzamento;
 window.esportaAvanzamentoExcel = esportaAvanzamentoExcel;
 window.showRiepilogo = showRiepilogo;
+window.showArchivio = showArchivio;
+window.scaricaFileArchivio = scaricaFileArchivio;
 window.eliminaFattura = eliminaFattura;
 window.scaricaFattureZip = scaricaFattureZip;
 window.openPhotoModal = openPhotoModal;
