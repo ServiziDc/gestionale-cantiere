@@ -819,6 +819,14 @@ async function showAvanzamento() {
 
     const puoModificare = await verificaProprietaCantiere();
 
+    // leggo le righe extra/varianti (lavori non previsti nel computo)
+    let extra = [];
+    try {
+      const eSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'extra'));
+      eSnap.forEach(d => extra.push({ id: d.id, ...d.data() }));
+      extra.sort((a, b) => (a.creato?.seconds || 0) - (b.creato?.seconds || 0));
+    } catch (e) {}
+
     let html = `<button class="secondary" style="margin-bottom:12px;" onclick="esportaAvanzamentoExcel()">📥 Scarica Excel</button>`;
     html += `<div class="card" style="padding:0; overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; font-size:13px;">
@@ -829,12 +837,15 @@ async function showAvanzamento() {
           <th style="text-align:right; padding:10px;">Q.tà fatta</th>
           ${window.isAdmin ? '<th style="text-align:right; padding:10px;">Prezzo</th>' : ''}
           ${window.isAdmin ? '<th style="text-align:right; padding:10px;">Totale</th>' : ''}
+          ${puoModificare ? '<th style="padding:10px;"></th>' : ''}
         </tr></thead><tbody>`;
 
     let totaleEuro = 0;
+    const numCol = 4 + (window.isAdmin ? 2 : 0) + (puoModificare ? 1 : 0);
+
+    // 1) voci del computo
     voci.forEach(v => {
       const qtaFatta = (v.quantitaFatta != null) ? v.quantitaFatta : '';
-      // casella quantità fatta: editabile se l'utente può modificare il cantiere
       const cellaFatta = puoModificare
         ? `<input type="number" step="0.01" value="${qtaFatta}" placeholder="0"
              onchange="salvaQuantitaFatta('${v.id}', this.value)"
@@ -861,9 +872,55 @@ async function showAvanzamento() {
         <td style="text-align:right; padding:10px;">${v.quantitaPrev != null ? escapeHtml(String(v.quantitaPrev)) : ''}</td>
         <td style="text-align:right; padding:10px;" data-prezzo="${Number(v.prezzo || 0)}">${cellaFatta}</td>
         ${cellePrezzo}
+        ${puoModificare ? '<td></td>' : ''}
       </tr>`;
     });
+
+    // 2) righe extra/varianti (se presenti)
+    if (extra.length > 0) {
+      html += `<tr style="background:#fef3c7;"><td colspan="${numCol}" style="padding:8px 10px; font-weight:600;">Varianti / Extra</td></tr>`;
+      extra.forEach(x => {
+        const tag = x.tipo === 'variante'
+          ? '<span style="background:#fed7aa; color:#9a3412; padding:1px 7px; border-radius:10px; font-size:11px;">Variante</span>'
+          : '<span style="background:#bfdbfe; color:#1e40af; padding:1px 7px; border-radius:10px; font-size:11px;">Extra</span>';
+        const qtaFatta = (x.quantitaFatta != null) ? x.quantitaFatta : '';
+        const cellaFatta = puoModificare
+          ? `<input type="number" step="0.01" value="${qtaFatta}" placeholder="0"
+               onchange="salvaQuantitaExtra('${x.id}', this.value)"
+               style="width:90px; padding:6px; border:1px solid #d1d5db; border-radius:6px; text-align:right;">`
+          : `<b>${qtaFatta || 0}</b>`;
+
+        let cellePrezzo = '';
+        if (window.isAdmin) {
+          const prezzo = Number(x.prezzo || 0);
+          const valore = Number(qtaFatta || 0) * prezzo;
+          totaleEuro += valore;
+          cellePrezzo = `
+            <td style="text-align:right; padding:10px;">
+              <input type="number" step="0.01" value="${prezzo || ''}" placeholder="prezzo"
+                onchange="salvaPrezzoExtra('${x.id}', this.value)"
+                style="width:80px; padding:6px; border:1px solid #d1d5db; border-radius:6px; text-align:right;">
+            </td>
+            <td style="text-align:right; padding:10px;">€ <b id="totv_${x.id}">${valore.toFixed(2)}</b></td>`;
+        }
+
+        html += `<tr style="border-top:1px solid #eee;">
+          <td style="padding:10px;">${escapeHtml(x.descrizione || '?')} ${tag}</td>
+          <td style="padding:10px;">${escapeHtml(x.unita || '')}</td>
+          <td style="text-align:right; padding:10px;">—</td>
+          <td style="text-align:right; padding:10px;" data-prezzo="${Number(x.prezzo || 0)}">${cellaFatta}</td>
+          ${cellePrezzo}
+          ${puoModificare ? `<td style="padding:10px;"><button class="small danger" style="padding:4px 8px;" onclick="eliminaExtra('${x.id}')">🗑</button></td>` : ''}
+        </tr>`;
+      });
+    }
+
     html += `</tbody></table></div>`;
+
+    // pulsante aggiungi variante/extra (creatore + admin)
+    if (puoModificare) {
+      html += `<button class="secondary" style="margin-bottom:12px;" onclick="apriFormExtra()">➕ Aggiungi variante / extra</button>`;
+    }
 
     if (window.isAdmin) {
       html += `<div class="card" style="background:#ecfdf5; border:1px solid #1d9e75;">
@@ -874,6 +931,91 @@ async function showAvanzamento() {
   } catch (e) {
     document.getElementById('view').innerHTML = `<div class="card" style="color:#dc2626;">Errore: ${e.message}</div>`;
   }
+}
+
+// ====== VARIANTI / EXTRA (lavori non previsti nel computo) ======
+function apriFormExtra() {
+  openModal(`
+    <h2>➕ Variante / Extra</h2>
+    <label>Descrizione del lavoro</label>
+    <textarea id="exDesc" rows="2" placeholder="Es: Spostamento quadro elettrico"></textarea>
+    <label>Tipo</label>
+    <select id="exTipo">
+      <option value="variante">Variante</option>
+      <option value="extra">Extra</option>
+    </select>
+    <label>Unità di misura</label>
+    <input id="exUnita" placeholder="Es: mq, cad, ore">
+    <label>Quantità fatta</label>
+    <input id="exQta" type="number" step="0.01" placeholder="0">
+    ${window.isAdmin ? '<label>Prezzo unitario €</label><input id="exPrezzo" type="number" step="0.01" placeholder="0">' : ''}
+    <div style="display:flex; gap:8px; margin-top:14px;">
+      <button onclick="salvaExtra()">Salva</button>
+      <button class="secondary" onclick="closeModal()">Annulla</button>
+    </div>
+  `);
+}
+
+async function salvaExtra() {
+  const desc = document.getElementById('exDesc').value.trim();
+  const tipo = document.getElementById('exTipo').value;
+  const unita = document.getElementById('exUnita').value.trim();
+  const qta = parseFloat(document.getElementById('exQta').value) || 0;
+  const prezzo = window.isAdmin ? (parseFloat(document.getElementById('exPrezzo')?.value) || 0) : 0;
+  if (!desc) { toast('Inserisci una descrizione'); return; }
+  try {
+    await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'extra'), {
+      descrizione: desc, tipo: tipo, unita: unita,
+      quantitaFatta: qta, prezzo: prezzo,
+      creatoDa: window.currentUser.uid,
+      creato: fb.serverTimestamp()
+    });
+    closeModal();
+    toast('Aggiunto ✓');
+    showAvanzamento();
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+async function salvaQuantitaExtra(extraId, valore) {
+  const qta = parseFloat(valore) || 0;
+  try {
+    await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'extra', extraId), { quantitaFatta: qta });
+    if (window.isAdmin) {
+      const tr = document.querySelector(`#totv_${extraId}`)?.closest('tr');
+      if (tr) {
+        const prezzo = Number(tr.querySelector('[data-prezzo]').getAttribute('data-prezzo')) || 0;
+        document.getElementById(`totv_${extraId}`).textContent = (qta * prezzo).toFixed(2);
+        ricalcolaTotaleAvanzamento();
+      }
+    }
+    toast('Salvato ✓');
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+async function salvaPrezzoExtra(extraId, valore) {
+  if (!window.isAdmin) return;
+  const prezzo = parseFloat(valore) || 0;
+  try {
+    await fb.updateDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'extra', extraId), { prezzo: prezzo });
+    const tr = document.querySelector(`#totv_${extraId}`)?.closest('tr');
+    if (tr) {
+      const cell = tr.querySelector('[data-prezzo]');
+      cell.setAttribute('data-prezzo', prezzo);
+      const qta = Number(cell.querySelector('input')?.value) || 0;
+      document.getElementById(`totv_${extraId}`).textContent = (qta * prezzo).toFixed(2);
+      ricalcolaTotaleAvanzamento();
+    }
+    toast('Prezzo salvato ✓');
+  } catch (e) { toast('Errore: ' + e.message); }
+}
+
+async function eliminaExtra(extraId) {
+  if (!confirm('Eliminare questa variante/extra?')) return;
+  try {
+    await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'extra', extraId));
+    toast('Eliminato ✓');
+    showAvanzamento();
+  } catch (e) { toast('Errore: ' + e.message); }
 }
 
 // Salva la quantità realizzata sulla voce del computo
@@ -942,6 +1084,14 @@ async function esportaAvanzamentoExcel() {
 
     if (voci.length === 0) { toast('Nessuna voce da esportare'); return; }
 
+    // leggo anche le righe extra/varianti
+    let extra = [];
+    try {
+      const eSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'extra'));
+      eSnap.forEach(d => extra.push({ id: d.id, ...d.data() }));
+      extra.sort((a, b) => (a.creato?.seconds || 0) - (b.creato?.seconds || 0));
+    } catch (e) {}
+
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Avanzamento');
 
@@ -977,6 +1127,27 @@ async function esportaAvanzamentoExcel() {
       ws.addRow(riga);
     });
 
+    // righe extra/varianti (dopo le voci del computo)
+    if (extra.length > 0) {
+      const intestaExtra = ws.addRow({ voce: '— VARIANTI / EXTRA —' });
+      intestaExtra.getCell(1).font = { bold: true };
+      rowIndex++;
+      extra.forEach(x => {
+        rowIndex++;
+        const riga = {
+          voce: (x.descrizione || '') + (x.tipo === 'variante' ? '  [Variante]' : '  [Extra]'),
+          unita: x.unita || '',
+          prev: '',
+          fatta: Number(x.quantitaFatta || 0)
+        };
+        if (window.isAdmin) {
+          riga.prezzo = Number(x.prezzo || 0);
+          riga.totale = { formula: `D${rowIndex}*E${rowIndex}` };
+        }
+        ws.addRow(riga);
+      });
+    }
+
     // riga somma finale (solo admin): SOMMA della colonna Totale (F)
     if (window.isAdmin && voci.length > 0) {
       const rigaSomma = ws.addRow({ prev: 'TOTALE COMPLESSIVO' });
@@ -1008,8 +1179,8 @@ async function esportaAvanzamentoExcel() {
     });
     header.height = 20;
 
-    // bordo leggero + testo a capo sulla descrizione lunga
-    for (let i = 2; i <= voci.length + 1; i++) {
+    // bordo leggero + testo a capo sulla descrizione lunga (tutte le righe dati)
+    for (let i = 2; i <= rowIndex; i++) {
       const row = ws.getRow(i);
       row.eachCell((cell) => {
         cell.border = { bottom: { style: 'hair', color: { argb: 'FFDDDDDD' } } };
@@ -1145,6 +1316,31 @@ async function showRiepilogo() {
         <td style="text-align:right; padding:8px;">€ ${vReal.toFixed(2)}</td>
       </tr>`;
     });
+
+    // aggiungo le righe extra/varianti
+    try {
+      const eSnap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'extra'));
+      let extra = [];
+      eSnap.forEach(d => extra.push(d.data()));
+      extra.sort((a, b) => (a.creato?.seconds || 0) - (b.creato?.seconds || 0));
+      if (extra.length > 0) {
+        rows += `<tr style="background:#fef3c7;"><td colspan="5" style="padding:6px 8px; font-weight:600;">Varianti / Extra</td></tr>`;
+        extra.forEach(x => {
+          const real = Number(x.quantitaFatta || 0);
+          const prezzo = Number(x.prezzo || 0);
+          const vReal = real * prezzo;
+          valoreRealizzato += vReal;
+          const tag = x.tipo === 'variante' ? 'Variante' : 'Extra';
+          rows += `<tr>
+            <td style="padding:8px;">${escapeHtml(x.descrizione || '?')} <span style="color:#9a3412; font-size:11px;">[${tag}]</span></td>
+            <td style="text-align:right; padding:8px;">—</td>
+            <td style="text-align:right; padding:8px;">${real} ${escapeHtml(x.unita || '')}</td>
+            <td style="text-align:right; padding:8px;">—</td>
+            <td style="text-align:right; padding:8px;">€ ${vReal.toFixed(2)}</td>
+          </tr>`;
+        });
+      }
+    } catch (e) {}
 
     document.getElementById('view').innerHTML = `
       <div class="admin-note">👑 Riepilogo economico — visibile solo all'admin.</div>
@@ -1892,6 +2088,11 @@ window.chiudiPdf = chiudiPdf;
 window.salvaQuantitaFatta = salvaQuantitaFatta;
 window.salvaPrezzoVoce = salvaPrezzoVoce;
 window.ricalcolaTotaleAvanzamento = ricalcolaTotaleAvanzamento;
+window.apriFormExtra = apriFormExtra;
+window.salvaExtra = salvaExtra;
+window.salvaQuantitaExtra = salvaQuantitaExtra;
+window.salvaPrezzoExtra = salvaPrezzoExtra;
+window.eliminaExtra = eliminaExtra;
 window.esportaAvanzamentoExcel = esportaAvanzamentoExcel;
 window.showRiepilogo = showRiepilogo;
 window.showArchivio = showArchivio;
