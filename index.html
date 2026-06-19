@@ -232,6 +232,14 @@ onAuthStateChanged(auth, async (user) => {
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- pdf.js: lettura/estrazione testo dai PDF (computo metrico) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if (window['pdfjs-dist/build/pdf']) window.pdfjsLib = window['pdfjs-dist/build/pdf'];
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+</script>
 <script>
   window.cvReady = false;
   var Module = { onRuntimeInitialized() { window.cvReady = true; } };
@@ -420,7 +428,9 @@ async function showComputo() {
     // pulsante per caricare il COMPUTO EXCEL: legge le voci + carica su Drive
     const barraPdf = puoModificare
       ? `<input type="file" id="computoExcelInput" accept=".xlsx,.xls" style="display:none;" onchange="caricaComputoExcel(this)">
-         <button class="secondary" style="margin-bottom:12px;" onclick="document.getElementById('computoExcelInput').click()">📊 Carica computo Excel</button>`
+         <button class="secondary" style="margin-bottom:8px;" onclick="document.getElementById('computoExcelInput').click()">📊 Carica computo Excel</button>
+         <input type="file" id="computoPdfImportInput" accept=".pdf" style="display:none;" onchange="caricaComputoPdf(this)">
+         <button class="secondary" style="margin-bottom:12px;" onclick="document.getElementById('computoPdfImportInput').click()">📄 Carica computo PDF</button>`
       : '';
 
     const snap = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
@@ -792,6 +802,266 @@ async function caricaComputoExcel(input) {
     toast('Errore: ' + (e.message || 'riprova'));
   } finally {
     input.value = '';
+  }
+}
+
+// ============ IMPORT COMPUTO DA PDF ============
+// Riconoscimento automatico delle righe di un computo metrico in PDF.
+// Funziona "a righe": ogni riga del PDF viene ricostruita per coordinate (stessa
+// riga = stessa altezza Y), poi si cerca alla fine della riga il pattern
+// "<descrizione> <unità di misura> <quantità> [€ prezzo unitario] [€ totale]".
+// È un riconoscimento EURISTICO pensato per essere flessibile su layout diversi
+// (non un singolo template fisso): per questo dopo l'estrazione viene sempre
+// mostrata un'anteprima per controllare/deselezionare le voci prima di importarle.
+
+// unità di misura riconosciute (computo metrico italiano), più lunghe prima
+const PDF_UM_TOKENS = [
+  'a corpo', 'cadauno', 'pezzi', 'corpo', 'a.c.', 'q.li', 'conf',
+  'cad', 'kit', 'set', 'ore', 'ora', 'nr', 'gg', 'hl',
+  'm2', 'm²', 'mc', 'm3', 'm³', 'mq', 'ml', 'mt', 'lt', 'kg', 'cf',
+  'q', 't', 'n', 'm', 'l', 'h', 'g'
+];
+const PDF_UM_ALT = PDF_UM_TOKENS
+  .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'))
+  .join('|');
+// NB: nessun \b di chiusura dopo il token unità: per unità che terminano con un
+// carattere non alfanumerico (es. "a.c.") il \b finale non scatterebbe mai
+// (il punto e lo spazio successivo sono entrambi non-word), facendo fallire il match.
+const PDF_RE_RIGA = new RegExp(
+  `\\b(${PDF_UM_ALT})\\s*((?:\\d[\\d.]*(?:,\\d+)?)?)\\s*((?:€\\s*(?:[\\d.,]+|-))?)\\s*((?:€\\s*(?:[\\d.,]+|-))?)\\s*$`,
+  'i'
+);
+
+function pdfParseQta(s) {
+  if (!s) return null;
+  const n = parseFloat(s.replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+function pdfParseEuro(s) {
+  if (!s) return null;
+  const num = s.replace('€', '').trim();
+  if (num === '-' || num === '') return null;
+  const n = parseFloat(num.replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
+
+// analizza una singola riga di testo: ritorna {descrizione, unita, quantitaPrev, prezzo} oppure null
+function pdfParseRigaComputo(rigaGrezza) {
+  const riga = rigaGrezza.replace(/\s+/g, ' ').trim();
+  if (!riga) return null;
+  if (/^totale\b/i.test(riga)) return null; // "TOTALE CAPITOLO", "TOTALE GENERALE..."
+  if (/^descrizione\s+u\.?m\.?\s+q\.?t/i.test(riga)) return null; // intestazione tabella
+
+  const m = riga.match(PDF_RE_RIGA);
+  if (!m) return null;
+
+  const unita = m[1].trim();
+  const descrizione = riga.slice(0, m.index).trim().replace(/[-–:]\s*$/, '').trim();
+  const quantitaPrev = pdfParseQta(m[2]);
+  let prezzo = pdfParseEuro(m[3]);
+  const totale = pdfParseEuro(m[4]);
+  if (prezzo === null && totale !== null) {
+    prezzo = (quantitaPrev && quantitaPrev > 0) ? totale / quantitaPrev : totale;
+  }
+
+  // scarto le righe "di catalogo" non utilizzate in questo specifico computo
+  // (diametri/varianti elencate ma senza quantità valorizzata)
+  if (quantitaPrev === null || quantitaPrev === 0) return null;
+
+  return { descrizione, unita, quantitaPrev, prezzo: prezzo || 0 };
+}
+
+// estrae le voci da un array di righe di testo (già ricostruite per riga dal PDF),
+// riunendo le descrizioni che vanno a capo nel documento originale
+function pdfEstraiVoci(righeTesto) {
+  const voci = [];
+  let contesto = '';
+  for (const line of righeTesto) {
+    const v = pdfParseRigaComputo(line);
+    if (v) {
+      if (!v.descrizione) {
+        v.descrizione = contesto || '(senza descrizione)';
+      } else if (/^[a-zà-ù]/.test(v.descrizione) && contesto) {
+        // descrizione che inizia per minuscola: prosecuzione di una frase
+        // andata a capo nel PDF -> la ricongiungo con la riga precedente
+        v.descrizione = (contesto + ' ' + v.descrizione).replace(/\s+/g, ' ').trim();
+      }
+      voci.push(v);
+    } else {
+      const pulita = line.replace(/\s+/g, ' ').trim();
+      if (pulita && pulita.length < 120 && !/^totale\b/i.test(pulita) && !/^descrizione\s+u\.?m\.?/i.test(pulita)) {
+        contesto = pulita;
+      }
+    }
+  }
+  return voci;
+}
+
+// estrae il testo del PDF riga per riga, ricostruendo le righe per coordinata Y
+// (stessa altezza = stessa riga), ordinando per X all'interno della riga
+async function pdfEstraiRighe(arrayBuffer) {
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const righeTotali = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const items = content.items
+      .filter(it => it.str && it.str.trim() !== '')
+      .map(it => ({ str: it.str, x: it.transform[4], y: it.transform[5] }));
+    items.sort((a, b) => b.y - a.y || a.x - b.x);
+    const TOLL = 2.5;
+    const righePagina = [];
+    let rigaCorr = null;
+    for (const it of items) {
+      if (rigaCorr && Math.abs(it.y - rigaCorr.y) <= TOLL) {
+        rigaCorr.items.push(it);
+      } else {
+        if (rigaCorr) righePagina.push(rigaCorr);
+        rigaCorr = { y: it.y, items: [it] };
+      }
+    }
+    if (rigaCorr) righePagina.push(rigaCorr);
+    for (const r of righePagina) {
+      r.items.sort((a, b) => a.x - b.x);
+      const testo = r.items.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
+      if (testo) righeTotali.push(testo);
+    }
+  }
+  return righeTotali;
+}
+
+// Carica il COMPUTO PDF: riconosce automaticamente le voci, mostra un'anteprima
+// per controllo/deselezione, poi importa + carica il file originale su Drive
+async function caricaComputoPdf(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    toast('Seleziona un file PDF'); input.value = ''; return;
+  }
+  if (file.size > 15 * 1024 * 1024) { toast('File troppo grande (max 15 MB)'); input.value = ''; return; }
+  if (!window.pdfjsLib) { toast('Libreria PDF non caricata, riprova'); input.value = ''; return; }
+
+  toast('Lettura PDF in corso...');
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const righe = await pdfEstraiRighe(arrayBuffer.slice(0)); // slice: pdf.js "consuma" il buffer
+    const voci = pdfEstraiVoci(righe);
+
+    if (voci.length === 0) {
+      toast('Nessuna voce riconosciuta nel PDF. Prova con l\'import Excel oppure aggiungi le voci a mano.');
+      input.value = ''; return;
+    }
+
+    // salvo in stato temporaneo per la conferma dall'anteprima
+    state.pdfImportFile = file;
+    state.pdfImportVoci = voci;
+    mostraAnteprimaImportPdf();
+  } catch (e) {
+    console.error(e);
+    toast('Errore lettura PDF: ' + (e.message || 'riprova'));
+  } finally {
+    input.value = '';
+  }
+}
+
+// mostra l'elenco delle voci riconosciute con checkbox per includerle/escluderle
+function mostraAnteprimaImportPdf() {
+  const voci = state.pdfImportVoci || [];
+  const righeHtml = voci.map((v, i) => `
+    <label class="operaio-check" style="align-items:flex-start;">
+      <input type="checkbox" checked id="pdfVoce${i}">
+      <div style="flex:1;">
+        <div style="font-weight:600; font-size:14px;">${escapeHtml(v.descrizione)}</div>
+        <div style="font-size:12px; color:#6b7280;">
+          ${v.quantitaPrev} ${escapeHtml(v.unita)}${v.prezzo ? ` · € ${v.prezzo.toFixed(2)}/cad` : ''}
+        </div>
+      </div>
+    </label>`).join('');
+
+  openModal(`
+    <h2>📄 Voci riconosciute (${voci.length})</h2>
+    <p style="font-size:13px; color:#6b7280; margin-top:-8px;">
+      Controlla l'elenco: il riconoscimento automatico dal PDF può contenere imprecisioni.
+      Deseleziona le voci sbagliate prima di importare (potrai comunque modificarle dopo).
+    </p>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button class="small secondary" style="width:auto;" onclick="document.querySelectorAll('#modalContent input[type=checkbox]').forEach(c=>c.checked=true)">Seleziona tutte</button>
+      <button class="small secondary" style="width:auto;" onclick="document.querySelectorAll('#modalContent input[type=checkbox]').forEach(c=>c.checked=false)">Deseleziona tutte</button>
+    </div>
+    <div style="max-height:48vh; overflow-y:auto; margin-bottom:14px;">${righeHtml}</div>
+    <button class="success" onclick="confermaImportPdf()">✅ Importa voci selezionate</button>
+    <button class="secondary" style="margin-top:8px;" onclick="state.pdfImportFile=null; state.pdfImportVoci=null; closeModal();">Annulla</button>
+  `);
+}
+
+// importa le voci selezionate nell'anteprima + carica il PDF originale su Drive
+async function confermaImportPdf() {
+  const tutteLeVoci = state.pdfImportVoci || [];
+  const file = state.pdfImportFile;
+  const selezionate = tutteLeVoci.filter((v, i) => {
+    const cb = document.getElementById('pdfVoce' + i);
+    return cb && cb.checked;
+  });
+  if (selezionate.length === 0) { toast('Nessuna voce selezionata'); return; }
+  if (!confirm(`Importare ${selezionate.length} voci nel cantiere? (sostituisce il computo attuale)`)) return;
+
+  closeModal();
+  toast('Importazione voci...');
+  try {
+    // cancello le voci esistenti del computo
+    const esistenti = await fb.getDocs(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'));
+    for (const d of esistenti.docs) {
+      await fb.deleteDoc(fb.doc(fb.db, 'gc_cantieri', state.cantiereId, 'computo', d.id));
+    }
+    // salvo le nuove voci
+    let ordine = 0;
+    for (const v of selezionate) {
+      await fb.addDoc(fb.collection(fb.db, 'gc_cantieri', state.cantiereId, 'computo'), {
+        descrizione: v.descrizione,
+        unita: v.unita,
+        quantitaPrev: v.quantitaPrev,
+        ordine: ordine++,
+        prezzo: v.prezzo || 0,
+        creato: fb.serverTimestamp()
+      });
+    }
+
+    // carico il PDF originale su Drive (stessa Cloud Function usata per l'Excel)
+    if (file) {
+      toast('Caricamento PDF su Drive...');
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(',')[1]);
+        reader.onerror = () => rej(new Error('Lettura file fallita'));
+        reader.readAsDataURL(file);
+      });
+      const oggi = new Date().toISOString().split('T')[0];
+      const fileName = `${oggi}_${file.name}`;
+      const token = await window.currentUser.getIdToken();
+      const URL_FUNZIONE = 'https://europe-west1-gama-service.cloudfunctions.net/caricaComputoSuDrive';
+      const resp = await fetch(URL_FUNZIONE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({
+          fileBase64: base64, fileName: fileName,
+          cantiereNome: state.cantiereName || '', cantiereId: state.cantiereId || ''
+        })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        toast(`Computo importato (${selezionate.length} voci) e salvato su Drive ✓`);
+      } else {
+        toast(`Voci importate (${selezionate.length}). Drive: ${data.error || 'errore caricamento file'}`);
+      }
+    } else {
+      toast(`Voci importate (${selezionate.length}) ✓`);
+    }
+    state.pdfImportFile = null;
+    state.pdfImportVoci = null;
+    showComputo();
+  } catch (e) {
+    console.error(e);
+    toast('Errore: ' + (e.message || 'riprova'));
   }
 }
 
@@ -2081,6 +2351,9 @@ window.salvaVoce = salvaVoce;
 window.editVoce = editVoce;
 window.eliminaVoce = eliminaVoce;
 window.caricaComputoExcel = caricaComputoExcel;
+window.caricaComputoPdf = caricaComputoPdf;
+window.mostraAnteprimaImportPdf = mostraAnteprimaImportPdf;
+window.confermaImportPdf = confermaImportPdf;
 window.caricaListaComputiPdf = caricaListaComputiPdf;
 window.eliminaComputoPdf = eliminaComputoPdf;
 window.visualizzaPdf = visualizzaPdf;
